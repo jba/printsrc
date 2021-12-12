@@ -26,7 +26,7 @@ type FS struct {
 }
 
 type Unexp struct {
-	E, u int
+	E, u float64
 }
 
 type (
@@ -63,6 +63,7 @@ func TestPrint(t *testing.T) {
 	i8 := int8(7)
 	fn := Float(math.NaN())
 	fn32 := float32(math.NaN())
+	c128 := complex(1, -1)
 	for _, test := range []struct {
 		in   interface{}
 		want string
@@ -71,26 +72,43 @@ func TestPrint(t *testing.T) {
 		{nil, "nil"},
 		{"a\tb", `"a\tb"`},
 		{true, "true"},
+		{Bool(true), "Bool(true)"},
+		{[]Bool{true}, "[]Bool{true}"},
 
 		// integers
 		{5, "5"},
 		{-87, "-87"},
 		{int32(3), "int32(3)"},
 
-		{3.2, "3.2"},
-
-		{1e-5, "1e-05"},
-		{Bool(true), "Bool(true)"},
-		{[]Bool{true}, "[]Bool{true}"},
 		{
 			// Constant literals as field values of struct literals are implicitly converted.
 			Underlying{B: true, S: "ok", I: 1, U: 2, F: 3, C: 4},
-			`Underlying{B: true,S: "ok",I: 1,U: 0x2,F: 3,C: complex(4, 0),}`,
+			`Underlying{B: true,S: "ok",I: 1,U: 0x2,F: 3,C: (4+0i),}`,
 		},
+
+		// floating-point
+		{3.2, "3.2"},
+		{1e-5, "1e-05"},
 		{math.NaN(), "math.NaN()"},
 		{math.Inf(3), "math.Inf(1)"},
 		{math.Inf(-3), "math.Inf(-1)"},
-		{complex(1, -1), "complex(1, -1)"},
+		{[]float32{float32(math.NaN())}, "[]float32{float32(math.NaN())}"},
+
+		// complex
+		{complex(1, -1), "(1-1i)"},
+		{c128, "(1-1i)"},
+		{complex(float32(1), float32(-1)), "complex64((1-1i))"},
+		{[]complex64{complex(1, -2)}, "[]complex64{(1-2i)}"},
+		{[]Complex{complex(1, -2)}, "[]Complex{(1-2i)}"},
+		{complex(math.NaN(), math.Inf(1)), "complex(math.NaN(), math.Inf(1))"},
+		{
+			[]complex64{complex64(complex(math.NaN(), math.Inf(1)))},
+			"[]complex64{complex64(complex(math.NaN(), math.Inf(1)))}",
+		},
+		{
+			[]Complex{Complex(complex(math.NaN(), math.Inf(1)))},
+			"[]Complex{Complex(complex(math.NaN(), math.Inf(1)))}",
+		},
 
 		// pointers
 		{(*int)(nil), "(*int)(nil)"},
@@ -215,6 +233,8 @@ func TestPrintErrors(t *testing.T) {
 	}{
 		{net.Flags(3), "unknown package"},
 		{struct{ X int }{3}, "unnamed type"},
+		{func() {}, "cannot print"},
+		{make(chan int), "cannot print"},
 	} {
 		_, err := p.Sprint(test.in)
 		if err == nil {

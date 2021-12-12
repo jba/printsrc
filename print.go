@@ -108,7 +108,7 @@ func (s *state) rprint(rv reflect.Value, imputedType reflect.Type, elide bool) {
 	case reflect.Struct:
 		s.printStruct(rv, imputedType, elide)
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		s.err = fmt.Errorf("cannot print %#v as source", rv)
+		s.err = fmt.Errorf("cannot print values of type %s as source", rv.Type())
 	default:
 		panic("bad kind")
 	}
@@ -146,32 +146,49 @@ func (s *state) printPrimitiveLiteral(v reflect.Value, imputedType reflect.Type)
 
 func (s *state) printFloat(v reflect.Value, imputedType reflect.Type) {
 	f := v.Float()
-	var str string
-	switch {
-	case math.IsNaN(f):
-		str = "math.NaN()"
-	case math.IsInf(f, 1):
-		str = "math.Inf(1)"
-	case math.IsInf(f, -1):
-		str = "math.Inf(-1)"
-	default:
+	fs := specialFloatString(f)
+	if fs == "" {
 		s.printPrimitiveLiteral(v, imputedType)
 		return
 	}
 	if v.Type() == tFloat64 {
-		s.printString(str)
+		s.printString(fs)
 	} else {
 		// We can't omit the conversion here, regardless of the imputed type, because
 		// this is not a constant literal.
-		s.printf("%s(%s)", s.sprintType(v.Type()), str)
+		s.printf("%s(%s)", s.sprintType(v.Type()), fs)
+	}
+}
+
+func specialFloatString(f float64) string {
+	switch {
+	case math.IsNaN(f):
+		return "math.NaN()"
+	case math.IsInf(f, 1):
+		return "math.Inf(1)"
+	case math.IsInf(f, -1):
+		return "math.Inf(-1)"
+	default:
+		return ""
 	}
 }
 
 func (s *state) printComplex(v reflect.Value, imputedType reflect.Type) {
 	c := v.Complex()
-	s.printf("complex(%s, %s)",
-		s.rsprint(reflect.ValueOf(real(c)), nil, false),
-		s.rsprint(reflect.ValueOf(imag(c)), nil, false))
+	rs := specialFloatString(real(c))
+	is := specialFloatString(imag(c))
+	if rs == "" && is == "" {
+		s.printPrimitiveLiteral(v, imputedType)
+	} else {
+		vs := fmt.Sprintf("complex(%s, %s)", rs, is)
+		// vs always represents a complex128. We do a conversion whenever the value
+		// is of any other type.
+		if v.Type() != tComplex128 {
+			s.printf("%s(%s)", s.sprintType(v.Type()), vs)
+		} else {
+			s.printString(vs)
+		}
+	}
 }
 
 func (s *state) printPtr(v reflect.Value, imputedType reflect.Type, elide bool) {
