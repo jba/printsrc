@@ -152,6 +152,10 @@ func TestPrint(t *testing.T) {
 		{map[int][]int{1: {2}}, "map[int][]int{1: {2}}"},
 		{map[int]int{1: 2, 3: 4}, "map[int]int{1: 2, 3: 4}"},
 		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{1: {2},3: {4, 5, 6},}"},
+		{map[bool]int{true: 1, false: 2}, "map[bool]int{false: 2, true: 1}"},
+		{map[uint]bool{2: true, 1: false}, "map[uint]bool{0x1: false, 0x2: true}"},
+		{map[float32]int{1.0: 1, -1.0: -1}, "map[float32]int{-1: -1, 1: 1}"},
+		{[]map[int]bool{{1: true}}, "[]map[int]bool{{1: true},}"},
 
 		// structs
 		{(*Nested)(nil), "(*Nested)(nil)"},
