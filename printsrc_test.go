@@ -65,9 +65,7 @@ type MyMap map[string]int
 
 func TestPrint(t *testing.T) {
 	p := NewPrinter("github.com/jba/printsrc")
-	p.RegisterImport("net")
-	p.RegisterImport("time")
-	p.RegisterNamedImport("text/template", "ttemp")
+	p.RegisterImport("text/template", "ttemp")
 	i8 := int8(7)
 	fn := Float(math.NaN())
 	fn32 := float32(math.NaN())
@@ -264,8 +262,6 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 
 func TestPrintErrors(t *testing.T) {
 	p := NewPrinter("github.com/jba/printsrc")
-	p.RegisterImport("time")
-	p.RegisterImport("math/big")
 	n := &node{v: 1}
 	n.next = n
 
@@ -273,7 +269,6 @@ func TestPrintErrors(t *testing.T) {
 		in   interface{}
 		want string
 	}{
-		{net.Flags(3), "unknown package"},
 		{struct{ X int }{3}, "unnamed type"},
 		{func() {}, "cannot print"},
 		{make(chan int), "cannot print"},

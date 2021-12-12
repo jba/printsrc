@@ -17,20 +17,13 @@ import (
 // This example shows how to use printsrc along with the text/template package
 // to generate a file of Go code.
 func Example_template() {
-	imports := []string{"time", "database/sql"}
-
 	p := printsrc.NewPrinter("github.com/jba/printsrc_test")
-	for _, imp := range imports {
-		p.RegisterImport(imp)
-	}
 
 	data := struct {
-		Imports []string
 		Start   time.Time
 		Strings []sql.NullString
 	}{
-		Imports: imports,
-		Start:   time.Date(2021, 12, 21, 14, 32, 11, 00, time.Local),
+		Start: time.Date(2021, 12, 21, 14, 32, 11, 00, time.Local),
 		Strings: []sql.NullString{
 			{String: "ok", Valid: true},
 			{String: "", Valid: false},
@@ -45,9 +38,8 @@ func Example_template() {
 		package example
 
         import (
-	      {{range .Imports}}
-		    "{{.}}"
-		  {{- end}}
+	      "database/sql"
+	      "time"
 		)
 
 		var startTime = {{.Start | src}}

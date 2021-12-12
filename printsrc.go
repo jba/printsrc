@@ -33,15 +33,14 @@ func NewPrinter(packagePath string) *Printer {
 		imports:        map[string]string{},
 	}
 	p.RegisterCustom(time.Time{}, func(x interface{}) (string, error) {
-		if err := p.CheckImport("time"); err != nil {
-			return "", err
-		}
 		t := x.(time.Time)
 		loc := t.Location()
 		if loc != time.Local && loc != time.UTC {
 			return "", fmt.Errorf("don't know how to represent location %q in source", loc)
 		}
-		return fmt.Sprintf("time.Date(%d, time.%s, %d, %d, %d, %d, %d, time.%s)",
+		ident := p.PackageIdentifier("time")
+		return fmt.Sprintf("%s.Date(%d, %[1]s.%[3]s, %d, %d, %d, %d, %d, %[1]s.%[9]s)",
+				ident,
 				t.Year(), t.Month(), t.Day(),
 				t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc),
 			nil
@@ -49,26 +48,27 @@ func NewPrinter(packagePath string) *Printer {
 	return p
 }
 
-// RegisterImport tells the Printer that an import for packagePath will be
-// provided in the generated file, with an import identifier that is the last
-// component of the path.
-func (p *Printer) RegisterImport(packagePath string) {
-	p.RegisterNamedImport(packagePath, path.Base(packagePath))
-}
-
-// RegisterNamedImport tells the Printer that an import for packagePath will be
-// provided in the generated file, with the specified import identifier.
-func (p *Printer) RegisterNamedImport(packagePath, ident string) {
+// RegisterImport tells the Printer to use the given identifier when
+// printing types imported from packagePage.
+func (p *Printer) RegisterImport(packagePath, ident string) {
 	p.imports[packagePath] = ident
 }
 
-// CheckImport returns an error if the given import path has not been
-// registered.
-func (p *Printer) CheckImport(packagePath string) error {
-	if _, ok := p.imports[packagePath]; !ok {
-		return fmt.Errorf("unknown package %s; call Printer.RegisterImport(%[1]q)", packagePath)
+// PackageIdentifier returns the identifier that should prefix type names from
+// the given import path. It returns the empty string if pkgPath is the same as
+// the path given to NewPrinter. Otherwise, if an identifier has been provided
+// with RegisterImport, it uses that. Finally, it returns the last component of
+// the import path.
+func (p *Printer) PackageIdentifier(pkgPath string) string {
+	if pkgPath == p.pkgPath {
+		return ""
 	}
-	return nil
+	if ident, ok := p.imports[pkgPath]; ok {
+		return ident
+	}
+	// Assume the package identifier is the last component of the package path.
+	// That is not always correct, which is why Printer.RegisterImport can override it.
+	return path.Base(pkgPath)
 }
 
 // PrintFunc is the type of custom printing functions. A printing function
@@ -372,23 +372,18 @@ func (s *state) printSeq(multiline bool, n int, printElem func(int)) {
 	}
 }
 
-// sprintType returns a string denoting the given type. It fails (by setting
-// s.err) if the type is from another package and an import for that package has
-// not been registered.
+// sprintType returns a string denoting the given type.
 func (s *state) sprintType(t reflect.Type) string {
 	if t.Name() != "" {
 		pkgPath := t.PkgPath()
 		if pkgPath == "" {
 			return t.String()
 		}
-		if pkgPath == s.p.pkgPath {
+		ident := s.p.PackageIdentifier(pkgPath)
+		if ident == "" {
 			return t.Name()
 		}
-		if err := s.p.CheckImport(pkgPath); err != nil {
-			s.err = err
-			return ""
-		}
-		return s.p.imports[pkgPath] + "." + t.Name()
+		return ident + "." + t.Name()
 	}
 	switch t.Kind() {
 	case reflect.Ptr:
