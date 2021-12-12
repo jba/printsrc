@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-// Fail after this many recursive calls to state.print.
-const maxDepth = 100
-
 // A Printer prints Go values as source code.
 type Printer struct {
 	pkgPath        string
@@ -87,6 +84,8 @@ func (p *Printer) RegisterCustom(valueForType interface{}, f PrintFunc) {
 }
 
 // Sprint returns a string that is a valid Go expression for value.
+// See the template example for how to use Sprint with text/template
+// for code generate.
 func (p *Printer) Sprint(value interface{}) (string, error) {
 	var buf bytes.Buffer
 	if err := p.Fprint(&buf, value); err != nil {
@@ -113,6 +112,9 @@ type state struct {
 	depth    int // recursive calls to print
 	tabDepth int // tabs from printSeq
 }
+
+// Fail after this many recursive calls to state.print.
+const maxDepth = 100
 
 // print is the main printing function. In addition to a value, it takes a type
 // that constants will be automatically converted to (the "imputed type"). It
