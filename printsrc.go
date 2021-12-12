@@ -14,21 +14,28 @@ import (
 	"time"
 )
 
-const maxDepth = 30
+// Fail after this many recursive calls to state.print.
+const maxDepth = 100
 
+// A Printer prints Go values as source code.
 type Printer struct {
 	pkgPath        string
 	customPrinters map[reflect.Type]PrintFunc
 	imports        map[string]string // from package path to identifier
 }
 
+// NewPrinter constructs a Printer. The argument is the import path of the
+// package where the printed code will reside.
+//
+// A custom printer for time.Time is registered by default. To override
+// it or to add custom printers for other types, call RegisterCustom.
 func NewPrinter(packagePath string) *Printer {
 	p := &Printer{
 		pkgPath:        packagePath,
 		customPrinters: map[reflect.Type]PrintFunc{},
 		imports:        map[string]string{},
 	}
-	p.RegisterCustomPrinter(time.Time{}, func(x interface{}) (string, error) {
+	p.RegisterCustom(time.Time{}, func(x interface{}) (string, error) {
 		if err := p.CheckImport("time"); err != nil {
 			return "", err
 		}
@@ -45,27 +52,41 @@ func NewPrinter(packagePath string) *Printer {
 	return p
 }
 
+// RegisterImport tells the Printer that an import for packagePath will be
+// provided in the generated file, with an import identifier that is the last
+// component of the path.
 func (p *Printer) RegisterImport(packagePath string) {
 	p.RegisterNamedImport(packagePath, path.Base(packagePath))
 }
 
+// RegisterNamedImport tells the Printer that an import for packagePath will be
+// provided in the generated file, with the specified import identifier.
 func (p *Printer) RegisterNamedImport(packagePath, ident string) {
 	p.imports[packagePath] = ident
 }
 
-func (p *Printer) CheckImport(pkgPath string) error {
-	if _, ok := p.imports[pkgPath]; !ok {
-		return fmt.Errorf("unknown package %s; call Printer.RegisterImport(%[1]q, <identifier>)", pkgPath)
+// CheckImport returns an error if the given import path has not been
+// registered.
+func (p *Printer) CheckImport(packagePath string) error {
+	if _, ok := p.imports[packagePath]; !ok {
+		return fmt.Errorf("unknown package %s; call Printer.RegisterImport(%[1]q)", packagePath)
 	}
 	return nil
 }
 
-type PrintFunc func(interface{}) (string, error)
+// PrintFunc is the type of custom printing functions. A printing function
+// accepts a value and should return a valid Go expression denoting that value,
+// or an error if it cannot produce one. The dynamic type of the value will be
+// one of the types with which the function was registered via RegisterCustom.
+type PrintFunc func(value interface{}) (string, error)
 
-func (p *Printer) RegisterCustomPrinter(valueForType interface{}, f PrintFunc) {
+// RegisterCustom associates a PrintFunc with the type of the given value.
+// An existing PrintFunc is replaced.
+func (p *Printer) RegisterCustom(valueForType interface{}, f PrintFunc) {
 	p.customPrinters[reflect.TypeOf(valueForType)] = f
 }
 
+// Sprint returns a string that is a valid Go expression for value.
 func (p *Printer) Sprint(value interface{}) (string, error) {
 	var buf bytes.Buffer
 	if err := p.Fprint(&buf, value); err != nil {
@@ -74,6 +95,7 @@ func (p *Printer) Sprint(value interface{}) (string, error) {
 	return buf.String(), nil
 }
 
+// Fprint prints a valid Go expression for value to w.
 func (p *Printer) Fprint(w io.Writer, value interface{}) error {
 	s := &state{
 		w: w,
@@ -83,6 +105,7 @@ func (p *Printer) Fprint(w io.Writer, value interface{}) error {
 	return s.err
 }
 
+// Internal state for printing.
 type state struct {
 	p        *Printer
 	w        io.Writer
@@ -91,14 +114,9 @@ type state struct {
 	tabDepth int // tabs from printSeq
 }
 
-func (s *state) sprint(v reflect.Value, imputedType reflect.Type, elide bool) string {
-	s2 := *s
-	var buf bytes.Buffer
-	s2.w = &buf
-	s2.print(v, imputedType, elide)
-	return buf.String()
-}
-
+// print is the main printing function. In addition to a value, it takes a type
+// that constants will be automatically converted to (the "imputed type"). It
+// also takes a boolean saying whether printing the imputed type can be elided.
 func (s *state) print(v reflect.Value, imputedType reflect.Type, elide bool) {
 	if s.err != nil {
 		return
@@ -111,7 +129,7 @@ func (s *state) print(v reflect.Value, imputedType reflect.Type, elide bool) {
 	defer func() { s.depth-- }()
 
 	if !v.IsValid() {
-		s.printString("nil") // TODO: may need a cast
+		s.printString("nil")
 		return
 	}
 	if cp := s.p.customPrinters[v.Type()]; cp != nil {
@@ -147,6 +165,14 @@ func (s *state) print(v reflect.Value, imputedType reflect.Type, elide bool) {
 	default:
 		panic("bad kind")
 	}
+}
+
+func (s *state) sprint(v reflect.Value, imputedType reflect.Type, elide bool) string {
+	s2 := *s
+	var buf bytes.Buffer
+	s2.w = &buf
+	s2.print(v, imputedType, elide)
+	return buf.String()
 }
 
 var (
@@ -294,6 +320,10 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 			}
 		}
 	}
+	if len(inds) == 0 && !v.IsZero() {
+		s.err = fmt.Errorf("non-zero %s struct has no printable fields; call Printer.RegisterCustom(%[1]s{}, ...)", t)
+		return
+	}
 	if len(inds) < 2 {
 		multiline = false
 	}
@@ -307,6 +337,9 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 	})
 }
 
+// printSeq prints a sequence of values (slice elements, array elements, or map key-value pairs).
+// If multiline is true, each value is printed on its own line.
+// Otherwise, all values are printed on a single line.
 func (s *state) printSeq(multiline bool, n int, printElem func(int)) {
 	printPrefix := func() {
 		s.printString("\n")
@@ -337,6 +370,9 @@ func (s *state) printSeq(multiline bool, n int, printElem func(int)) {
 	}
 }
 
+// sprintType returns a string denoting the given type. It fails (by setting
+// s.err) if the type is from another package and an import for that package has
+// not been registered.
 func (s *state) sprintType(t reflect.Type) string {
 	if t.Name() != "" {
 		pkgPath := t.PkgPath()

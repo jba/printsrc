@@ -4,6 +4,7 @@ package printsrc
 
 import (
 	"math"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
@@ -123,6 +124,7 @@ func TestPrint(t *testing.T) {
 		{&i8, "func() *int8 { var x int8 = 7; return &x }()"},
 		{fn, "Float(math.NaN())"},
 		{&fn, "func() *Float { var x Float = Float(math.NaN()); return &x }()"},
+		{[]*int{nil}, "[]*int{nil,}"},
 		{[]*int8{&i8}, "[]*int8{func() *int8 { var x int8 = 7; return &x }(),}"},
 		{
 			[]*int8{func() *int8 { var x int8 = 7; return &x }()},
@@ -263,6 +265,7 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 func TestPrintErrors(t *testing.T) {
 	p := NewPrinter("github.com/jba/printsrc")
 	p.RegisterImport("time")
+	p.RegisterImport("math/big")
 	n := &node{v: 1}
 	n.next = n
 
@@ -276,10 +279,10 @@ func TestPrintErrors(t *testing.T) {
 		{make(chan int), "cannot print"},
 		{n, "depth exceeded"},
 		{time.Date(2008, 4, 23, 9, 56, 23, 29, time.FixedZone("foo", 17)), "location"},
+		{big.NewInt(1), "RegisterCustom"},
 	} {
-		got, err := p.Sprint(test.in)
+		_, err := p.Sprint(test.in)
 		if err == nil {
-			t.Log("XXX", got)
 			t.Errorf("%#v: got nil, want err", test.in)
 		} else if !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%#v: got %q, looking for %q", test.in, err, test.want)
