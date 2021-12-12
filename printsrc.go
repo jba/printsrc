@@ -76,31 +76,30 @@ func (p *Printer) Sprint(value interface{}) (string, error) {
 
 func (p *Printer) Fprint(w io.Writer, value interface{}) error {
 	s := &state{
-		w:     w,
-		p:     p,
-		err:   nil,
-		depth: 0,
+		w: w,
+		p: p,
 	}
-	s.rprint(reflect.ValueOf(value), nil, false)
+	s.print(reflect.ValueOf(value), nil, false)
 	return s.err
 }
 
 type state struct {
-	p     *Printer
-	w     io.Writer
-	err   error
-	depth int
+	p        *Printer
+	w        io.Writer
+	err      error
+	depth    int // recursive calls to print
+	tabDepth int // tabs from printSeq
 }
 
-func (s *state) rsprint(v reflect.Value, imputedType reflect.Type, elide bool) string {
+func (s *state) sprint(v reflect.Value, imputedType reflect.Type, elide bool) string {
 	s2 := *s
 	var buf bytes.Buffer
 	s2.w = &buf
-	s2.rprint(v, imputedType, elide)
+	s2.print(v, imputedType, elide)
 	return buf.String()
 }
 
-func (s *state) rprint(v reflect.Value, imputedType reflect.Type, elide bool) {
+func (s *state) print(v reflect.Value, imputedType reflect.Type, elide bool) {
 	if s.err != nil {
 		return
 	}
@@ -136,7 +135,7 @@ func (s *state) rprint(v reflect.Value, imputedType reflect.Type, elide bool) {
 	case reflect.Ptr:
 		s.printPtr(v, imputedType, elide)
 	case reflect.Interface:
-		s.rprint(v.Elem(), imputedType, elide)
+		s.print(v.Elem(), imputedType, elide)
 	case reflect.Slice, reflect.Array:
 		s.printSliceOrArray(v, imputedType, elide)
 	case reflect.Map:
@@ -226,12 +225,12 @@ func (s *state) printPtr(v reflect.Value, imputedType reflect.Type, elide bool) 
 	}
 	if isPrimitive(elem.Kind()) {
 		s.printf("func() *%s { var x %[1]s = %s; return &x }()",
-			s.sprintType(elem.Type()), s.rsprint(elem, elem.Type(), false))
+			s.sprintType(elem.Type()), s.sprint(elem, elem.Type(), false))
 	} else if v.Type() == imputedType && elide {
-		s.rprint(elem, imputedType.Elem(), elide)
+		s.print(elem, imputedType.Elem(), elide)
 	} else {
 		s.printString("&")
-		s.rprint(elem, nil, false)
+		s.print(elem, nil, false)
 	}
 }
 
@@ -249,7 +248,7 @@ func (s *state) printSliceOrArray(v reflect.Value, imputedType reflect.Type, eli
 
 	s.printString(ts)
 	s.printSeq(!isSmall(t.Elem()) || v.Len() > 10, v.Len(), func(i int) {
-		s.rprint(v.Index(i), t.Elem(), true)
+		s.print(v.Index(i), t.Elem(), true)
 	})
 }
 
@@ -275,9 +274,9 @@ func (s *state) printMap(v reflect.Value, imputedType reflect.Type, elide bool) 
 	oneline := len(keys) < 2 || (len(keys) == 2 && isSmall(t.Key()) && isSmall(t.Elem()))
 	s.printString(ts)
 	s.printSeq(!oneline, len(keys), func(i int) {
-		s.rprint(keys[i], t.Key(), true)
+		s.print(keys[i], t.Key(), true)
 		s.printString(": ")
-		s.rprint(v.MapIndex(keys[i]), t.Elem(), true)
+		s.print(v.MapIndex(keys[i]), t.Elem(), true)
 	})
 }
 
@@ -304,19 +303,29 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 	s.printSeq(multiline, len(inds), func(i int) {
 		ind := inds[i]
 		s.printf("%s: ", t.Field(ind).Name)
-		s.rprint(v.Field(ind), t.Field(ind).Type, false)
+		s.print(v.Field(ind), t.Field(ind).Type, false)
 	})
 }
 
 func (s *state) printSeq(multiline bool, n int, printElem func(int)) {
+	printPrefix := func() {
+		s.printString("\n")
+		for i := 0; i < s.tabDepth; i++ {
+			s.printString("\t")
+		}
+	}
+
 	s.printString("{")
 	if multiline {
+		s.tabDepth++
 		for i := 0; i < n; i++ {
-			s.printString("\n\t")
+			printPrefix()
 			printElem(i)
 			s.printString(",")
 		}
-		s.printString("\n}\n")
+		s.tabDepth--
+		printPrefix()
+		s.printString("}")
 	} else {
 		for i := 0; i < n; i++ {
 			if i > 0 {

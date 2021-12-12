@@ -229,26 +229,26 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 		want string
 	}{
 		{[]int{1, 2}, "[]int{1, 2}"},
-		{[]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, "[]int{\n\t1,\n\t2,\n\t3,\n\t4,\n\t5,\n\t6,\n\t7,\n\t8,\n\t9,\n\t10,\n\t11,\n}\n"},
-		{[]string{"a", "b"}, "[]string{\n\t\"a\",\n\t\"b\",\n}\n"},
+		{[]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, "[]int{\n\t1,\n\t2,\n\t3,\n\t4,\n\t5,\n\t6,\n\t7,\n\t8,\n\t9,\n\t10,\n\t11,\n}"},
+		{[]string{"a", "b"}, "[]string{\n\t\"a\",\n\t\"b\",\n}"},
 		{map[string]int{}, "map[string]int{}"},
 		{map[string]int{"a": 1}, `map[string]int{"a": 1}`},
-		{map[string]int{"a": 1, "b": 2}, "map[string]int{\n\t\"a\": 1,\n\t\"b\": 2,\n}\n"},
+		{map[string]int{"a": 1, "b": 2}, "map[string]int{\n\t\"a\": 1,\n\t\"b\": 2,\n}"},
 		{
 			T{true, map[string]Float{"x": 0.5}},
-			"T{\n\tBoo: true,\n\tMap: map[string]Float{\"x\": 0.5},\n}\n",
+			"T{\n\tBoo: true,\n\tMap: map[string]Float{\"x\": 0.5},\n}",
 		},
 		{
 			T{false, map[string]Float{"x": 0.5}},
 			"T{Map: map[string]Float{\"x\": 0.5}}",
 		},
 		{&Nested{B: 3}, "&Nested{B: 3}"},
-		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{\n\tA: 1,\n\tNested: Nested{B: 2},\n}\n"},
-		{[]Nested{{B: 1}}, "[]Nested{\n\t{B: 1},\n}\n"},
-		{[]*Nested{{B: 1}}, "[]*Nested{\n\t{B: 1},\n}\n"},
+		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{\n\tA: 1,\n\tNested: Nested{B: 2},\n}"},
+		{[]Nested{{B: 1}}, "[]Nested{\n\t{B: 1},\n}"},
+		{[]*Nested{{B: 1}}, "[]*Nested{\n\t{B: 1},\n}"},
 		{map[int][]int{}, "map[int][]int{}"},
 		{map[int][]int{1: {2}}, "map[int][]int{1: {2}}"},
-		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{\n\t1: {2},\n\t3: {4, 5, 6},\n}\n"},
+		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{\n\t1: {2},\n\t3: {4, 5, 6},\n}"},
 	} {
 		got, err := p.Sprint(test.in)
 		if err != nil {
@@ -277,8 +277,9 @@ func TestPrintErrors(t *testing.T) {
 		{n, "depth exceeded"},
 		{time.Date(2008, 4, 23, 9, 56, 23, 29, time.FixedZone("foo", 17)), "location"},
 	} {
-		_, err := p.Sprint(test.in)
+		got, err := p.Sprint(test.in)
 		if err == nil {
+			t.Log("XXX", got)
 			t.Errorf("%#v: got nil, want err", test.in)
 		} else if !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%#v: got %q, looking for %q", test.in, err, test.want)

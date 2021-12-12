@@ -7,7 +7,11 @@ Imports
 
 Cycles
 
+Bugs:
+
 // - NaN map keys? not handling
+
+can't distinguish structs defined inside a function, but those won't work
 
 */
 package printsrc
