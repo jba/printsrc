@@ -1,9 +1,8 @@
 // Print a Go value as Go source.
 
 // TODO:
-// - NaN map keys?
+// - NaN map keys? not handling
 // - testing printPtr with various imputed/elide combos
-// - test 2-element inline maps
 // - 100% test coverage
 package main
 
@@ -249,22 +248,23 @@ func (s *state) printMap(v reflect.Value, imputedType reflect.Type, elide bool) 
 		})
 	}
 
+	oneline := len(keys) < 2 || (len(keys) == 2 && isSmall(t.Key()) && isSmall(t.Elem()))
 	s.printString(ts)
-	s.printSeq(len(keys) >= 2, len(keys), func(i int) {
+	s.printSeq(!oneline, len(keys), func(i int) {
 		s.rprint(keys[i], t.Key(), true)
 		s.printString(": ")
 		s.rprint(v.MapIndex(keys[i]), t.Elem(), true)
 	})
 }
 
-func (s *state) printStruct(rv reflect.Value, imputedType reflect.Type, elide bool) {
-	t := rv.Type()
+func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide bool) {
+	t := v.Type()
 	var (
 		inds      []int
 		multiline = false
 	)
 	for i := 0; i < t.NumField(); i++ {
-		if (t.PkgPath() == s.p.pkgPath || t.Field(i).IsExported()) && !rv.Field(i).IsZero() {
+		if (t.PkgPath() == s.p.pkgPath || t.Field(i).IsExported()) && !v.Field(i).IsZero() {
 			inds = append(inds, i)
 			if !isSmall(t.Field(i).Type) {
 				multiline = true
@@ -280,7 +280,7 @@ func (s *state) printStruct(rv reflect.Value, imputedType reflect.Type, elide bo
 	s.printSeq(multiline, len(inds), func(i int) {
 		ind := inds[i]
 		s.printf("%s: ", t.Field(ind).Name)
-		s.rprint(rv.Field(ind), t.Field(ind).Type, false)
+		s.rprint(v.Field(ind), t.Field(ind).Type, false)
 	})
 }
 

@@ -146,6 +146,7 @@ func TestPrint(t *testing.T) {
 		{MyMap{"a": 1}, `MyMap{"a": 1}`},
 		{map[int][]int{}, "map[int][]int{}"},
 		{map[int][]int{1: {2}}, "map[int][]int{1: {2}}"},
+		{map[int]int{1: 2, 3: 4}, "map[int]int{1: 2, 3: 4}"},
 		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{1: {2},3: {4, 5, 6},}"},
 
 		// structs
