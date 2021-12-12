@@ -21,10 +21,6 @@ type Nested struct {
 	B int16
 }
 
-type FS struct {
-	F float32
-}
-
 type Unexp struct {
 	E, u float64
 }
@@ -54,6 +50,11 @@ type (
 
 	PPoint *Point
 )
+
+type node struct {
+	v    int
+	next *node
+}
 
 type MyMap map[string]int
 
@@ -89,6 +90,7 @@ func TestPrint(t *testing.T) {
 		// floating-point
 		{3.2, "3.2"},
 		{1e-5, "1e-05"},
+		{float32(1), "float32(1)"},
 		{math.NaN(), "math.NaN()"},
 		{math.Inf(3), "math.Inf(1)"},
 		{math.Inf(-3), "math.Inf(-1)"},
@@ -162,10 +164,14 @@ func TestPrint(t *testing.T) {
 			[]interface{}{float32(1), fn32, map[string]int(nil)},
 			"[]interface{}{float32(1),float32(math.NaN()),map[string]int(nil),}",
 		},
-		// net.Flags is a uint
+		{
+			&node{1, &node{2, &node{v: 3}}},
+			"&node{v: 1,next: &node{v: 2,next: &node{v: 3},},}",
+		},
+
+		// imports
+		// (net.Flags is a uint)
 		{net.Flags(17), "net.Flags(0x11)"},
-		{float32(1), "float32(1)"},
-		{FS{F: 1}, "FS{F: 1}"},
 
 		// elision examples from the Go spec
 		{[...]Point{{1.5, -3.5}, {0, 0}}, "[2]Point{{x: 1.5, y: -3.5},{},}"},
@@ -227,6 +233,9 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 
 func TestPrintErrors(t *testing.T) {
 	p := NewPrinter("printing")
+	n := &node{v: 1}
+	n.next = n
+
 	for _, test := range []struct {
 		in   interface{}
 		want string
@@ -235,6 +244,7 @@ func TestPrintErrors(t *testing.T) {
 		{struct{ X int }{3}, "unnamed type"},
 		{func() {}, "cannot print"},
 		{make(chan int), "cannot print"},
+		{n, "depth exceeded"},
 	} {
 		_, err := p.Sprint(test.in)
 		if err == nil {

@@ -1,8 +1,6 @@
 // Print a Go value as Go source.
 
 // TODO:
-// - testing complex, with and w/o elision
-// - ptr cycle detection
 // - NaN map keys?
 // - testing printPtr with various imputed/elide combos
 // - test 2-element inline maps
@@ -11,12 +9,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"reflect"
 	"sort"
 )
+
+const maxDepth = 30
 
 type Printer struct {
 	pkgPath        string
@@ -42,10 +43,6 @@ func (p *Printer) RegisterCustomPrinter(valueForType interface{}, f PrintFunc) {
 	p.customPrinters[reflect.TypeOf(valueForType)] = f
 }
 
-func (p *Printer) DetectCycles() {
-	panic("unimp")
-}
-
 func (p *Printer) Sprint(value interface{}) (string, error) {
 	var buf bytes.Buffer
 	if err := p.Fprint(&buf, value); err != nil {
@@ -56,31 +53,47 @@ func (p *Printer) Sprint(value interface{}) (string, error) {
 
 func (p *Printer) Fprint(w io.Writer, value interface{}) error {
 	s := &state{
-		w:   w,
-		p:   p,
-		err: nil,
+		w:     w,
+		p:     p,
+		err:   nil,
+		depth: 0,
 	}
-	s.print(value)
+	s.rprint(reflect.ValueOf(value), nil, false)
 	return s.err
 }
 
 type state struct {
-	p   *Printer
-	w   io.Writer
-	err error
+	p     *Printer
+	w     io.Writer
+	err   error
+	depth int
 }
 
-func (s *state) print(value interface{}) {
-	s.rprint(reflect.ValueOf(value), nil, false)
+func (s *state) rsprint(v reflect.Value, imputedType reflect.Type, elide bool) string {
+	s2 := *s
+	var buf bytes.Buffer
+	s2.w = &buf
+	s2.rprint(v, imputedType, elide)
+	return buf.String()
 }
 
-func (s *state) rprint(rv reflect.Value, imputedType reflect.Type, elide bool) {
-	if !rv.IsValid() {
+func (s *state) rprint(v reflect.Value, imputedType reflect.Type, elide bool) {
+	if s.err != nil {
+		return
+	}
+	if s.depth > maxDepth {
+		s.err = errors.New("max recursion depth exceeded (probable circularity)")
+		return
+	}
+	s.depth++
+	defer func() { s.depth-- }()
+
+	if !v.IsValid() {
 		s.printString("nil") // TODO: may need a cast
 		return
 	}
-	if cp := s.p.customPrinters[rv.Type()]; cp != nil {
-		out, err := cp(rv.Interface())
+	if cp := s.p.customPrinters[v.Type()]; cp != nil {
+		out, err := cp(v.Interface())
 		if err != nil {
 			s.err = err
 			return
@@ -89,37 +102,29 @@ func (s *state) rprint(rv reflect.Value, imputedType reflect.Type, elide bool) {
 		return
 	}
 
-	switch rv.Kind() {
+	switch v.Kind() {
 	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		s.printPrimitiveLiteral(rv, imputedType)
+		s.printPrimitiveLiteral(v, imputedType)
 	case reflect.Float32, reflect.Float64:
-		s.printFloat(rv, imputedType)
+		s.printFloat(v, imputedType)
 	case reflect.Complex64, reflect.Complex128:
-		s.printComplex(rv, imputedType)
+		s.printComplex(v, imputedType)
 	case reflect.Ptr:
-		s.printPtr(rv, imputedType, elide)
+		s.printPtr(v, imputedType, elide)
 	case reflect.Interface:
-		s.rprint(rv.Elem(), imputedType, elide)
+		s.rprint(v.Elem(), imputedType, elide)
 	case reflect.Slice, reflect.Array:
-		s.printSliceOrArray(rv, imputedType, elide)
+		s.printSliceOrArray(v, imputedType, elide)
 	case reflect.Map:
-		s.printMap(rv, imputedType, elide)
+		s.printMap(v, imputedType, elide)
 	case reflect.Struct:
-		s.printStruct(rv, imputedType, elide)
+		s.printStruct(v, imputedType, elide)
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		s.err = fmt.Errorf("cannot print values of type %s as source", rv.Type())
+		s.err = fmt.Errorf("cannot print values of type %s as source", v.Type())
 	default:
 		panic("bad kind")
 	}
-}
-
-func (s *state) rsprint(rv reflect.Value, imputedType reflect.Type, elide bool) string {
-	s2 := *s
-	var buf bytes.Buffer
-	s2.w = &buf
-	s2.rprint(rv, imputedType, elide)
-	return buf.String()
 }
 
 var (
@@ -199,10 +204,9 @@ func (s *state) printPtr(v reflect.Value, imputedType reflect.Type, elide bool) 
 	if isPrimitive(elem.Kind()) {
 		s.printf("func() *%s { var x %[1]s = %s; return &x }()",
 			s.sprintType(elem.Type()), s.rsprint(elem, elem.Type(), false))
-	} else if v.Type() == imputedType {
+	} else if v.Type() == imputedType && elide {
 		s.rprint(elem, imputedType.Elem(), elide)
 	} else {
-
 		s.printString("&")
 		s.rprint(elem, nil, false)
 	}
