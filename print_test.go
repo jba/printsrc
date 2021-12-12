@@ -10,7 +10,6 @@ import (
 type T struct {
 	Boo bool
 	Map map[string]Float
-	u   int
 }
 
 type nesting struct {
@@ -22,8 +21,12 @@ type Nested struct {
 	B int16
 }
 
-type X struct {
+type FS struct {
 	F float32
+}
+
+type Unexp struct {
+	E, u int
 }
 
 type (
@@ -44,25 +47,39 @@ type Underlying struct {
 	C Complex
 }
 
+type (
+	Point struct {
+		x, y float32
+	}
+
+	PPoint *Point
+)
+
+type MyMap map[string]int
+
 func TestPrint(t *testing.T) {
 	p := NewPrinter("printing")
 	p.RegisterImport("net", "net")
-	i := int8(7)
+	i8 := int8(7)
 	fn := Float(math.NaN())
 	fn32 := float32(math.NaN())
 	for _, test := range []struct {
 		in   interface{}
 		want string
 	}{
+		// simple primitive values
 		{nil, "nil"},
+		{"a\tb", `"a\tb"`},
+		{true, "true"},
 
 		// integers
 		{5, "5"},
 		{-87, "-87"},
 		{int32(3), "int32(3)"},
+
 		{3.2, "3.2"},
+
 		{1e-5, "1e-05"},
-		{true, "true"},
 		{Bool(true), "Bool(true)"},
 		{[]Bool{true}, "[]Bool{true}"},
 		{
@@ -70,7 +87,6 @@ func TestPrint(t *testing.T) {
 			Underlying{B: true, S: "ok", I: 1, U: 2, F: 3, C: 4},
 			`Underlying{B: true,S: "ok",I: 1,U: 0x2,F: 3,C: complex(4, 0),}`,
 		},
-		{"a\tb", `"a\tb"`},
 		{math.NaN(), "math.NaN()"},
 		{math.Inf(3), "math.Inf(1)"},
 		{math.Inf(-3), "math.Inf(-1)"},
@@ -78,7 +94,7 @@ func TestPrint(t *testing.T) {
 
 		// pointers
 		{(*int)(nil), "(*int)(nil)"},
-		{&i, "func() *int8 { var x int8 = 7; return &x }()"},
+		{&i8, "func() *int8 { var x int8 = 7; return &x }()"},
 		{fn, "Float(math.NaN())"},
 		{&fn, "func() *Float { var x Float = Float(math.NaN()); return &x }()"},
 
@@ -88,6 +104,7 @@ func TestPrint(t *testing.T) {
 		{[]int{1}, "[]int{1}"},
 		{[]int{1, 2}, "[]int{1, 2}"},
 		{[]int{1, 2, 3}, "[]int{1, 2, 3}"},
+		{[]int16{1, int16(i8)}, "[]int16{1, 7}"},
 		{[]Float{2.3}, "[]Float{2.3}"},
 		{[]float32{fn32}, "[]float32{float32(math.NaN())}"},
 		{[1]bool{true}, "[1]bool{true}"},
@@ -99,23 +116,27 @@ func TestPrint(t *testing.T) {
 		{map[string]int{"a": 1}, `map[string]int{"a": 1}`},
 		{map[string]int{"a": 1, "b": 2}, `map[string]int{"a": 1,"b": 2,}`},
 		{
-			T{true, map[string]Float{"x": 0.5}, 1},
+			T{true, map[string]Float{"x": 0.5}},
 			`T{Boo: true,Map: map[string]Float{"x": 0.5},}`,
 		},
 		{
-			T{false, map[string]Float{"x": 0.5}, 1},
+			T{false, map[string]Float{"x": 0.5}},
 			`T{Map: map[string]Float{"x": 0.5}}`,
 		},
+		{MyMap{"a": 1}, `MyMap{"a": 1}`},
+		{map[int][]int{}, "map[int][]int{}"},
+		{map[int][]int{1: {2}}, "map[int][]int{1: {2}}"},
+		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{1: {2},3: {4, 5, 6},}"},
 
 		// structs
 		{(*Nested)(nil), "(*Nested)(nil)"},
 		{&Nested{B: 3}, "&Nested{B: 3}"},
+		{Point{1, 2}, "Point{x: 1, y: 2}"},
 		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{A: 1,Nested: Nested{B: 2},}"},
 		{[]Nested{{B: 1}}, "[]Nested{{B: 1},}"},
 		{[]*Nested{{B: 1}, nil}, "[]*Nested{{B: 1},nil,}"},
-		{map[int][]int{}, "map[int][]int{}"},
-		{map[int][]int{1: {2}}, "map[int][]int{1: {2}}"},
-		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{1: {2},3: {4, 5, 6},}"},
+		{Unexp{1, 2}, "Unexp{E: 1, u: 2}"},
+
 		{map[Nested]Nested{{B: 1}: {B: 2}}, "map[Nested]Nested{{B: 1}: {B: 2}}"},
 		{[]Float{Float(math.NaN())}, "[]Float{Float(math.NaN())}"},
 		{[]Float{fn}, "[]Float{Float(math.NaN())}"},
@@ -126,7 +147,16 @@ func TestPrint(t *testing.T) {
 		// net.Flags is a uint
 		{net.Flags(17), "net.Flags(0x11)"},
 		{float32(1), "float32(1)"},
-		{X{F: 1}, "X{F: 1}"},
+		{FS{F: 1}, "FS{F: 1}"},
+
+		// elision examples from the Go spec
+		{[...]Point{{1.5, -3.5}, {0, 0}}, "[2]Point{{x: 1.5, y: -3.5},{},}"},
+		{[][]int{{1, 2, 3}, {4, 5}}, "[][]int{{1, 2, 3},{4, 5},}"},
+		{[][]Point{{{0, 1}, {1, 2}}}, "[][]Point{{{y: 1},{x: 1, y: 2},},}"},
+		{map[string]Point{"orig": {0, 0}}, `map[string]Point{"orig": {}}`},
+		{map[Point]string{{0, 0}: "orig"}, `map[Point]string{{}: "orig"}`},
+		{[2]*Point{{1.5, -3.5}, {}}, "[2]*Point{{x: 1.5, y: -3.5},{},}"},
+		{[2]PPoint{{1.5, -3.5}, {}}, "[2]PPoint{{x: 1.5, y: -3.5},{},}"},
 	} {
 		got, err := p.Sprint(test.in)
 		if err != nil {
@@ -152,11 +182,11 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 		{map[string]int{"a": 1}, `map[string]int{"a": 1}`},
 		{map[string]int{"a": 1, "b": 2}, "map[string]int{\n\t\"a\": 1,\n\t\"b\": 2,\n}\n"},
 		{
-			T{true, map[string]Float{"x": 0.5}, 1},
+			T{true, map[string]Float{"x": 0.5}},
 			"T{\n\tBoo: true,\n\tMap: map[string]Float{\"x\": 0.5},\n}\n",
 		},
 		{
-			T{false, map[string]Float{"x": 0.5}, 1},
+			T{false, map[string]Float{"x": 0.5}},
 			"T{Map: map[string]Float{\"x\": 0.5}}",
 		},
 		{&Nested{B: 3}, "&Nested{B: 3}"},
@@ -179,19 +209,18 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 
 func TestPrintErrors(t *testing.T) {
 	p := NewPrinter("printing")
-	_, err := p.Sprint(net.Flags(3))
-	if err == nil {
-		t.Error("got nil, want err")
+	for _, test := range []struct {
+		in   interface{}
+		want string
+	}{
+		{net.Flags(3), "unknown package"},
+		{struct{ X int }{3}, "unnamed type"},
+	} {
+		_, err := p.Sprint(test.in)
+		if err == nil {
+			t.Errorf("%#v: got nil, want err", test.in)
+		} else if !strings.Contains(err.Error(), test.want) {
+			t.Errorf("%#v: got %q, looking for %q", test.in, err, test.want)
+		}
 	}
 }
-
-// From the Go spec:
-// [...]Point{{1.5, -3.5}, {0, 0}}     // same as [...]Point{Point{1.5, -3.5}, Point{0, 0}}
-// [][]int{{1, 2, 3}, {4, 5}}          // same as [][]int{[]int{1, 2, 3}, []int{4, 5}}
-// [][]Point{{{0, 1}, {1, 2}}}         // same as [][]Point{[]Point{Point{0, 1}, Point{1, 2}}}
-// map[string]Point{"orig": {0, 0}}    // same as map[string]Point{"orig": Point{0, 0}}
-// map[Point]string{{0, 0}: "orig"}    // same as map[Point]string{Point{0, 0}: "orig"}
-
-// type PPoint *Point
-// [2]*Point{{1.5, -3.5}, {}}          // same as [2]*Point{&Point{1.5, -3.5}, &Point{}}
-// [2]PPoint{{1.5, -3.5}, {}}          // same as [2]PPoint{PPoint(&Point{1.5, -3.5}), PPoint(&Point{})}
