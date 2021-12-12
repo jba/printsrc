@@ -1,9 +1,14 @@
+// Copyright 2021 by Jonathan Amsterdam. All rights reserved.
+
 // Print a Go value as Go source.
 
 // TODO:
 // - NaN map keys? not handling
 // - testing printPtr with various imputed/elide combos
 // - 100% test coverage
+/*
+
+ */
 package main
 
 import (
@@ -12,8 +17,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path"
 	"reflect"
 	"sort"
+	"time"
 )
 
 const maxDepth = 30
@@ -25,15 +32,41 @@ type Printer struct {
 }
 
 func NewPrinter(packagePath string) *Printer {
-	return &Printer{
+	p := &Printer{
 		pkgPath:        packagePath,
 		customPrinters: map[reflect.Type]PrintFunc{},
 		imports:        map[string]string{},
 	}
+	p.RegisterCustomPrinter(time.Time{}, func(x interface{}) (string, error) {
+		if err := p.CheckImport("time"); err != nil {
+			return "", err
+		}
+		t := x.(time.Time)
+		loc := t.Location()
+		if loc != time.Local && loc != time.UTC {
+			return "", fmt.Errorf("don't know how to represent location %q in source", loc)
+		}
+		return fmt.Sprintf("time.Date(%d, time.%s, %d, %d, %d, %d, %d, time.%s)",
+				t.Year(), t.Month(), t.Day(),
+				t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc),
+			nil
+	})
+	return p
 }
 
-func (p *Printer) RegisterImport(packagePath, ident string) {
+func (p *Printer) RegisterImport(packagePath string) {
+	p.RegisterNamedImport(packagePath, path.Base(packagePath))
+}
+
+func (p *Printer) RegisterNamedImport(packagePath, ident string) {
 	p.imports[packagePath] = ident
+}
+
+func (p *Printer) CheckImport(pkgPath string) error {
+	if _, ok := p.imports[pkgPath]; !ok {
+		return fmt.Errorf("unknown package %s; call Printer.RegisterImport(%[1]q, <identifier>)", pkgPath)
+	}
+	return nil
 }
 
 type PrintFunc func(interface{}) (string, error)
@@ -313,11 +346,11 @@ func (s *state) sprintType(t reflect.Type) string {
 		if pkgPath == s.p.pkgPath {
 			return t.Name()
 		}
-		if id, ok := s.p.imports[pkgPath]; ok {
-			return id + "." + t.Name()
+		if err := s.p.CheckImport(pkgPath); err != nil {
+			s.err = err
+			return ""
 		}
-		s.err = fmt.Errorf("unknown package %s; call Printer.RegisterImport(%[1]q, <identifier>)", pkgPath)
-		return ""
+		return s.p.imports[pkgPath] + "." + t.Name()
 	}
 	switch t.Kind() {
 	case reflect.Ptr:

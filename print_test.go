@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"text/template"
+	"time"
 )
 
 type T struct {
@@ -60,7 +62,9 @@ type MyMap map[string]int
 
 func TestPrint(t *testing.T) {
 	p := NewPrinter("printing")
-	p.RegisterImport("net", "net")
+	p.RegisterImport("net")
+	p.RegisterImport("time")
+	p.RegisterNamedImport("text/template", "ttemp")
 	i8 := int8(7)
 	fn := Float(math.NaN())
 	fn32 := float32(math.NaN())
@@ -173,6 +177,8 @@ func TestPrint(t *testing.T) {
 		// imports
 		// (net.Flags is a uint)
 		{net.Flags(17), "net.Flags(0x11)"},
+		// named import
+		{template.Template{}, "ttemp.Template{}"},
 
 		// elision examples from the Go spec
 		{[...]Point{{1.5, -3.5}, {0, 0}}, "[2]Point{{x: 1.5, y: -3.5},{},}"},
@@ -182,6 +188,16 @@ func TestPrint(t *testing.T) {
 		{map[Point]string{{0, 0}: "orig"}, `map[Point]string{{}: "orig"}`},
 		{[2]*Point{{1.5, -3.5}, {}}, "[2]*Point{{x: 1.5, y: -3.5},{},}"},
 		{[2]PPoint{{1.5, -3.5}, {}}, "[2]PPoint{{x: 1.5, y: -3.5},{},}"},
+
+		// time.Time
+		{
+			time.Date(2008, 4, 23, 9, 56, 23, 29, time.Local),
+			"time.Date(2008, time.April, 23, 9, 56, 23, 29, time.Local)",
+		},
+		{
+			time.Date(2008, 4, 23, 9, 56, 23, 29, time.UTC),
+			"time.Date(2008, time.April, 23, 9, 56, 23, 29, time.UTC)",
+		},
 	} {
 		got, err := p.Sprint(test.in)
 		if err != nil {
@@ -234,6 +250,7 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 
 func TestPrintErrors(t *testing.T) {
 	p := NewPrinter("printing")
+	p.RegisterImport("time")
 	n := &node{v: 1}
 	n.next = n
 
@@ -246,6 +263,7 @@ func TestPrintErrors(t *testing.T) {
 		{func() {}, "cannot print"},
 		{make(chan int), "cannot print"},
 		{n, "depth exceeded"},
+		{time.Date(2008, 4, 23, 9, 56, 23, 29, time.FixedZone("foo", 17)), "location"},
 	} {
 		_, err := p.Sprint(test.in)
 		if err == nil {
