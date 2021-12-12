@@ -306,7 +306,7 @@ func (s *state) printPrimitiveLiteral(v reflect.Value, imputedType reflect.Type)
 	// causes an implicit conversion, or whose underlying type is interface.
 	// Or the value might not have come from a location at all: it might be at top level.
 	vs := fmt.Sprintf("%#v", v)
-	if v.Kind() == reflect.Float64 && strings.IndexAny(vs, ".e") < 0 {
+	if v.Kind() == reflect.Float64 && !strings.ContainsAny(vs, ".e") {
 		vs += ".0"
 	}
 	if v.Type() != defaultType(v) && (imputedType == nil || imputedType.Kind() == reflect.Interface) {
