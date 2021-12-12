@@ -51,7 +51,7 @@ func NewPrinter(packagePath string) *Printer {
 }
 
 // RegisterImport tells the Printer to use the given identifier when
-// printing types imported from packagePage.
+// printing types imported from packagePath.
 func (p *Printer) RegisterImport(packagePath, ident string) {
 	p.imports[packagePath] = ident
 }
@@ -133,6 +133,8 @@ func processPrintFunc(pf interface{}) (argType reflect.Type, f printFunc, err er
 // is the function's argument type, printsrc will use the registered function to
 // sort the keys.
 //
+// RegisterLess panics if the function signature is invalid.
+//
 // RegisterLess can be used to override the built-in less functions.
 func (p *Printer) RegisterLess(lessFunc interface{}) {
 	argType, fun, err := processLessFunc(lessFunc)
@@ -199,7 +201,7 @@ func (p *Printer) getLessFunc(t reflect.Type) func(v1, v2 reflect.Value) bool {
 
 // Sprint returns a string that is a valid Go expression for value.
 // See the template example for how to use Sprint with text/template
-// for code generate.
+// to generate code.
 func (p *Printer) Sprint(value interface{}) (string, error) {
 	var buf bytes.Buffer
 	if err := p.Fprint(&buf, value); err != nil {

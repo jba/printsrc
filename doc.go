@@ -21,7 +21,7 @@ To generate code for a slice of Points in package "geo":
 
 Registering Import Path Identifiers
 
-To print the names a type in another package, printsrc needs to know how to
+To print the names of a type in another package, printsrc needs to know how to
 refer to the package. Usually, but not always, the package identifier is the
 last component of the package path. For example, the types in the standard
 library package "database/sql" are normally prefixed by "sql". But this rule
@@ -58,6 +58,18 @@ That creates noise in code review diffs.
 
 Use Printer.RegisterLess to register a function that compares two values
 of a type. It will be called to sort map keys of that type.
+
+
+Type Elision
+
+This package elides the types of composite literals when it can.
+For example, the value
+
+   []Point{Point{x: 1, y: 2}}
+
+will print in its simplified form,
+
+   []Point{{x: 1, y: 2}}
 
 
 Known Issues

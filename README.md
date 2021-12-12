@@ -43,9 +43,9 @@ It handles negative infinity and NaN similarly.
 
 Function and channel values cannot be written as source using information
 available from the `reflect` package. Pretty-printers do their best to render
-these values, as they should, but `printsrc` fails on them. If you are trying to
-generate a data structure and there is an unrepresentable value in it, that is
-your mistake.
+these values, as they should, but `printsrc` fails on them so you can discover
+the problem quickly.
+
 
 ### Pointers
 
@@ -65,7 +65,7 @@ this package will print `s` as
 }
 ```
 
-This is a valid Go expression, although it doesn't preserve the sharing
+That is a valid Go expression, although it doesn't preserve the sharing
 relationship of the original. For simplicity, `printsrc` doesn't detect sharing,
 and fails on cycles.
 
@@ -78,16 +78,15 @@ been imported (and imported under the name "time"). Types in the package for
 where the generated code lives don't have that problem; they can be generated
 without a qualifying package identifier.
 
-In order to generate type names correctly, `printsrc` must be told the intended
-package for the code it is generating, and the paths and import identifiers for
-any packages needed by the generated code. That may seem onerous, but look at it
-the other way: any print that does not have that information cannot possibly
-generate valid Go code.
+`printsrc` assumes that packages it encounters have been imported using the
+identifier that is the last component of their import path. Most of the time
+that is correct, but when it isn't you can register a different identifier
+with an import path.
 
 ### Values that need constructors
 
 The `time.Time` type has unexported fields, so it can't be usably printed as a Go
-struct literal (unless we were generating code in the `time` package itself).
+struct literal (unless the code is being generated in the `time` package itself).
 There are many other types that need to be constructed with a function call or
 in some other way. Since `printsrc` can't discover the constructors for these
 types on its own, it lets you provide custom printing functions for any type.
