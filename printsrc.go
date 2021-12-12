@@ -11,29 +11,31 @@ import (
 	"path"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 )
 
 // A Printer prints Go values as source code.
 type Printer struct {
-	pkgPath        string
-	customPrinters map[reflect.Type]PrintFunc
-	imports        map[string]string // from package path to identifier
+	pkgPath   string
+	imports   map[string]string // from package path to identifier
+	printers  map[reflect.Type]printFunc
+	lessFuncs map[reflect.Type]lessFunc
 }
 
 // NewPrinter constructs a Printer. The argument is the import path of the
 // package where the printed code will reside.
 //
 // A custom printer for time.Time is registered by default. To override
-// it or to add custom printers for other types, call RegisterCustom.
+// it or to add custom printers for other types, call RegisterPrinter.
 func NewPrinter(packagePath string) *Printer {
 	p := &Printer{
-		pkgPath:        packagePath,
-		customPrinters: map[reflect.Type]PrintFunc{},
-		imports:        map[string]string{},
+		pkgPath:   packagePath,
+		imports:   map[string]string{},
+		printers:  map[reflect.Type]printFunc{},
+		lessFuncs: map[reflect.Type]lessFunc{},
 	}
-	p.RegisterCustom(time.Time{}, func(x interface{}) (string, error) {
-		t := x.(time.Time)
+	p.RegisterPrinter(func(t time.Time) (string, error) {
 		loc := t.Location()
 		if loc != time.Local && loc != time.UTC {
 			return "", fmt.Errorf("don't know how to represent location %q in source", loc)
@@ -71,16 +73,128 @@ func (p *Printer) PackageIdentifier(pkgPath string) string {
 	return path.Base(pkgPath)
 }
 
-// PrintFunc is the type of custom printing functions. A printing function
-// accepts a value and should return a valid Go expression denoting that value,
-// or an error if it cannot produce one. The dynamic type of the value will be
-// one of the types with which the function was registered via RegisterCustom.
-type PrintFunc func(value interface{}) (string, error)
+// RegisterPrinter associates a type with a function that renders values of that
+// type as Go source. An existing function for the type is replaced.
+//
+// The printFunc argument must be a function of one argument. Values with the
+// type of that argument will be rendered with the function instead of in the
+// usual way. The function's return type must be string or (string, error).
+// RegisterPrinter panics if the function signature is invalid.
+func (p *Printer) RegisterPrinter(printFunc interface{}) {
+	argType, fun, err := processPrintFunc(printFunc)
+	if err != nil {
+		panic(err)
+	}
+	p.printers[argType] = fun
+}
 
-// RegisterCustom associates a PrintFunc with the type of the given value.
-// An existing PrintFunc is replaced.
-func (p *Printer) RegisterCustom(valueForType interface{}, f PrintFunc) {
-	p.customPrinters[reflect.TypeOf(valueForType)] = f
+// type for wrapped custom print functions.
+type printFunc func(reflect.Value) (string, error)
+
+var tError = reflect.TypeOf([]error(nil)).Elem()
+
+func processPrintFunc(pf interface{}) (argType reflect.Type, f printFunc, err error) {
+	fv := reflect.ValueOf(pf)
+	ft := fv.Type()
+	if ft.Kind() != reflect.Func {
+		return nil, nil, fmt.Errorf("argument to RegisterPrinter not a function: %v", pf)
+	}
+	if ft.NumIn() != 1 || ft.IsVariadic() {
+		return nil, nil, fmt.Errorf("argument to RegisterPrinter must be a function of one non-variadic argument: %v", pf)
+	}
+	argType = ft.In(0)
+	if !((ft.NumOut() == 1 && ft.Out(0) == tString) ||
+		(ft.NumOut() == 2 && ft.Out(0) == tString && ft.Out(1) == tError)) {
+		return nil, nil, fmt.Errorf("argument to RegisterPrinter must be a function returning string or (string, error): %v", pf)
+	}
+	f = func(v reflect.Value) (string, error) {
+		outs := fv.Call([]reflect.Value{v})
+		var err error
+		if len(outs) == 2 {
+			err, _ = outs[1].Interface().(error) // If it's not an error, it's nil.
+		}
+		return outs[0].String(), err
+	}
+	return argType, f, nil
+}
+
+// RegisterLess associates a function with a type that will be used to sort map
+// keys of that type.
+//
+// When rendering a map value as Go source, printsrc will sort the keys if it
+// can figure out how. By default it can sort any type whose underlying type is
+// numeric, string or bool. Maps with other key types will have their keys
+// printed in random order, complicating diffs. If a less function is registered
+// for a key type, however, then map keys of that type will be sorted.
+//
+// The provided lessFunc must be a function of two arguments, both of the same
+// type, and a single bool return value. It should report whether its first
+// argument is less than its second. When confronted with a map whose key type
+// is the function's argument type, printsrc will use the registered function to
+// sort the keys.
+//
+// RegisterLess can be used to override the built-in less functions.
+func (p *Printer) RegisterLess(lessFunc interface{}) {
+	argType, fun, err := processLessFunc(lessFunc)
+	if err != nil {
+		panic(err)
+	}
+	p.lessFuncs[argType] = fun
+}
+
+type lessFunc func(v1, v2 reflect.Value) bool
+
+func processLessFunc(lf interface{}) (argType reflect.Type, f lessFunc, err error) {
+	fv := reflect.ValueOf(lf)
+	ft := fv.Type()
+	if ft.Kind() != reflect.Func {
+		return nil, nil, fmt.Errorf("argument to RegisterLess not a function: %v", lf)
+	}
+	if ft.NumIn() != 2 || ft.IsVariadic() || ft.In(0) != ft.In(1) {
+		return nil, nil, fmt.Errorf("argument to RegisterLess must be a function of two non-variadic arguments of the same type: %v", lf)
+	}
+	argType = ft.In(0)
+	if ft.NumOut() != 1 || ft.Out(0) != tBool {
+		return nil, nil, fmt.Errorf("argument to RegisterLess must be a function returning bool: %v", lf)
+	}
+	f = func(v1, v2 reflect.Value) bool {
+		outs := fv.Call([]reflect.Value{v1, v2})
+		return outs[0].Interface().(bool)
+	}
+	return argType, f, nil
+}
+
+func (p *Printer) getLessFunc(t reflect.Type) func(v1, v2 reflect.Value) bool {
+	if f, ok := p.lessFuncs[t]; ok {
+		return f
+	}
+	switch t.Kind() {
+	case reflect.Bool:
+		return func(v1, v2 reflect.Value) bool {
+			return !v1.Bool() && v2.Bool()
+		}
+	case reflect.String:
+		return func(v1, v2 reflect.Value) bool {
+			return v1.String() < v2.String()
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return func(v1, v2 reflect.Value) bool {
+			return v1.Int() < v2.Int()
+		}
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return func(v1, v2 reflect.Value) bool {
+			return v1.Uint() < v2.Uint()
+		}
+
+	case reflect.Float32, reflect.Float64:
+		return func(v1, v2 reflect.Value) bool {
+			return v1.Float() < v2.Float()
+		}
+
+	default:
+		return nil
+	}
 }
 
 // Sprint returns a string that is a valid Go expression for value.
@@ -134,8 +248,8 @@ func (s *state) print(v reflect.Value, imputedType reflect.Type, elide bool) {
 		s.printString("nil")
 		return
 	}
-	if cp := s.p.customPrinters[v.Type()]; cp != nil {
-		out, err := cp(v.Interface())
+	if cp := s.p.printers[v.Type()]; cp != nil {
+		out, err := cp(v)
 		if err != nil {
 			s.err = err
 			return
@@ -192,6 +306,9 @@ func (s *state) printPrimitiveLiteral(v reflect.Value, imputedType reflect.Type)
 	// causes an implicit conversion, or whose underlying type is interface.
 	// Or the value might not have come from a location at all: it might be at top level.
 	vs := fmt.Sprintf("%#v", v)
+	if v.Kind() == reflect.Float64 && strings.IndexAny(vs, ".e") < 0 {
+		vs += ".0"
+	}
 	if v.Type() != defaultType(v) && (imputedType == nil || imputedType.Kind() == reflect.Interface) {
 		s.printf("%s(%s)", s.sprintType(v.Type()), vs)
 	} else {
@@ -293,7 +410,7 @@ func (s *state) printMap(v reflect.Value, imputedType reflect.Type, elide bool) 
 	}
 	keys := v.MapKeys()
 	// Sort the keys if we can.
-	if less := lessFunc(t.Key()); less != nil {
+	if less := s.p.getLessFunc(t.Key()); less != nil {
 		sort.Slice(keys, func(i, j int) bool {
 			return less(keys[i], keys[j])
 		})
@@ -323,7 +440,7 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 		}
 	}
 	if len(inds) == 0 && !v.IsZero() {
-		s.err = fmt.Errorf("non-zero %s struct has no printable fields; call Printer.RegisterCustom(%[1]s{}, ...)", t)
+		s.err = fmt.Errorf("non-zero %s struct has no printable fields; call Printer.RegisterPrinter(%[1]s{}, ...)", t)
 		return
 	}
 	if len(inds) < 2 {
@@ -468,67 +585,5 @@ func defaultType(v reflect.Value) reflect.Type {
 		return tComplex128
 	default:
 		panic("not a possible value for a numeric untyped constant")
-	}
-}
-
-// func isInt(t reflect.Type) bool {
-// 	switch t.Kind() {
-// 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-// 		return true
-// 	}
-// 	return false
-// }
-
-// func isUint(t reflect.Type) bool {
-// 	switch t.Kind() {
-// 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-// 		return true
-// 	}
-// 	return false
-// }
-
-// func isFloat(t reflect.Type) bool {
-// 	switch t.Kind() {
-// 	case reflect.Float32, reflect.Float64:
-// 		return true
-// 	}
-// 	return false
-// }
-
-// func isComplex(t reflect.Type) bool {
-// 	switch t.Kind() {
-
-// 		return true
-// 	}
-// 	return false
-// }
-
-func lessFunc(t reflect.Type) func(v1, v2 reflect.Value) bool {
-	switch t.Kind() {
-	case reflect.Bool:
-		return func(v1, v2 reflect.Value) bool {
-			return !v1.Bool() && v2.Bool()
-		}
-	case reflect.String:
-		return func(v1, v2 reflect.Value) bool {
-			return v1.String() < v2.String()
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return func(v1, v2 reflect.Value) bool {
-			return v1.Int() < v2.Int()
-		}
-
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return func(v1, v2 reflect.Value) bool {
-			return v1.Uint() < v2.Uint()
-		}
-
-	case reflect.Float32, reflect.Float64:
-		return func(v1, v2 reflect.Value) bool {
-			return v1.Float() < v2.Float()
-		}
-
-	default:
-		return nil
 	}
 }

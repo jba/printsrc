@@ -38,9 +38,10 @@ Registering Custom Printers
 Sometimes there is no way for printsrc to discover how to print a value as valid
 Go source code. For example, the math/big.Int type is a struct with no exported
 fields, so a big.Int cannot be printed as a struct literal. (A big.Int can be
-constructed with the NewInt function or the SetString method.) Use
-Printer.RegisterCustom to associate a type with a function that returns source
-code for a value of that type.
+constructed with the NewInt function or the SetString method.)
+
+Use Printer.RegisterPrinter to associate a type with a function that returns
+source code for a value of that type.
 
 A custom printer for time.Time is registered by default. It prints a time.Time
 by printing a call to time.Date. An error is returned if the time's location is
@@ -48,14 +49,20 @@ not Local or UTC, since those are the only locations for which source
 expressions can be produced.
 
 
+Registering Less Functions
+
+This package makes an effort to sort map keys in order to generate deterministic
+output. But if it can't sort the keys it prints the map anyway. The output
+will be valid Go but the order of the keys will change from run to run.
+That creates noise in code review diffs.
+
+Use Printer.RegisterLess to register a function that compares two values
+of a type. It will be called to sort map keys of that type.
+
+
 Known Issues
 
 Maps with multiple NaN keys are not handled.
-
-printsrc makes an effort to sort map keys in order to generate deterministic
-output. But if it can't sort the keys it prints the map anyway. The output
-will be valid Go but the order of the keys will change from run to run.
-TODO: custom less funcs
 
 The reflect package provides no way to distinguish a type defined inside a
 function from one at top level. So printsrc will print expressions containing

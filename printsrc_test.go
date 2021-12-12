@@ -85,7 +85,7 @@ func TestPrint(t *testing.T) {
 		{5, "5"},
 		{-87, "-87"},
 		{int32(3), "int32(3)"},
-
+		{uint(1), "uint(0x1)"},
 		{
 			// Constant literals as field values of struct literals are implicitly converted.
 			Underlying{B: true, S: "ok", I: 1, U: 2, F: 3, C: 4},
@@ -95,6 +95,7 @@ func TestPrint(t *testing.T) {
 		// floating-point
 		{3.2, "3.2"},
 		{1e-5, "1e-05"},
+		{2.0, "2.0"},
 		{float32(1), "float32(1)"},
 		{math.NaN(), "math.NaN()"},
 		{math.Inf(3), "math.Inf(1)"},
@@ -104,6 +105,7 @@ func TestPrint(t *testing.T) {
 		// complex
 		{complex(1, -1), "(1-1i)"},
 		{c128, "(1-1i)"},
+		{complex(3, 0), "(3+0i)"},
 		{complex(float32(1), float32(-1)), "complex64((1-1i))"},
 		{[]complex64{complex(1, -2)}, "[]complex64{(1-2i)}"},
 		{[]Complex{complex(1, -2)}, "[]Complex{(1-2i)}"},
@@ -172,7 +174,7 @@ func TestPrint(t *testing.T) {
 		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{A: 1,Nested: Nested{B: 2},}"},
 		{[]Nested{{B: 1}}, "[]Nested{{B: 1},}"},
 		{[]*Nested{{B: 1}, nil}, "[]*Nested{{B: 1},nil,}"},
-		{Unexp{1, 2}, "Unexp{E: 1, u: 2}"},
+		{Unexp{1, 2}, "Unexp{E: 1.0, u: 2.0}"},
 
 		{map[Nested]Nested{{B: 1}: {B: 2}}, "map[Nested]Nested{{B: 1}: {B: 2}}"},
 		{[]Float{Float(math.NaN())}, "[]Float{Float(math.NaN())}"},
@@ -274,13 +276,51 @@ func TestPrintErrors(t *testing.T) {
 		{make(chan int), "cannot print"},
 		{n, "depth exceeded"},
 		{time.Date(2008, 4, 23, 9, 56, 23, 29, time.FixedZone("foo", 17)), "location"},
-		{big.NewInt(1), "RegisterCustom"},
+		{big.NewInt(1), "RegisterPrinter"},
 	} {
 		_, err := p.Sprint(test.in)
 		if err == nil {
 			t.Errorf("%#v: got nil, want err", test.in)
 		} else if !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%#v: got %q, looking for %q", test.in, err, test.want)
+		}
+	}
+}
+
+func TestRegisterPrinter(t *testing.T) {
+	p := NewPrinter("x")
+	p.RegisterPrinter(func(x int) string { return "INT" })
+	got, err := p.Sprint([]interface{}{1, 2.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[]interface{}{\n\tINT,\n\t2.0,\n}"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestLessFunc(t *testing.T) {
+	p := NewPrinter("x")
+	p.RegisterLess(func(t1, t2 time.Time) bool { return t1.Before(t2) })
+	m := map[time.Time]int{
+		time.Date(2000, 1, 1, 0, 0, 0, 0, time.Local): 1,
+		time.Date(1990, 1, 1, 0, 0, 0, 0, time.Local): 2,
+	}
+	// Try to exhibit the flakiness.
+	// Without the RegisterLess call above, this loop fails every time.
+	for i := 0; i < 10; i++ {
+		got, err := p.Sprint(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `map[time.Time]int{
+	time.Date(1990, time.January, 1, 0, 0, 0, 0, time.Local): 2,
+	time.Date(2000, time.January, 1, 0, 0, 0, 0, time.Local): 1,
+}`
+		if got != want {
+			t.Errorf("got\n%q\nwant\n%q", got, want)
+			break
 		}
 	}
 }
