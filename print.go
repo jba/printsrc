@@ -6,6 +6,8 @@
 // - ptr cycle detection
 // - NaN map keys?
 // - anonymous struct types?
+// - testing printPtr with various imputed/elide combos
+// - test 2-element inline maps
 package main
 
 import (
@@ -13,83 +15,72 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"reflect"
 	"sort"
 )
 
-type Option optFunc
+type Printer struct {
+	pkgPath        string
+	customPrinters map[reflect.Type]PrintFunc
+	imports        map[string]string // from package path to identifier
+}
 
-type optFunc func(*state) error
+func NewPrinter(packagePath string) *Printer {
+	return &Printer{
+		pkgPath:        packagePath,
+		customPrinters: map[reflect.Type]PrintFunc{},
+		imports:        map[string]string{},
+	}
+}
+
+func (p *Printer) RegisterImport(packagePath, ident string) {
+	p.imports[packagePath] = ident
+}
 
 type PrintFunc func(interface{}) (string, error)
 
-type Import struct {
-	Identifier string
-	Path       string
+func (p *Printer) RegisterCustomPrinter(valueForType interface{}, f PrintFunc) {
+	p.customPrinters[reflect.TypeOf(valueForType)] = f
 }
 
-type state struct {
-	w              io.Writer
-	pkg            string
-	err            error
-	customPrinters map[reflect.Type]PrintFunc
-	importsNeeded  map[string]Import
+func (p *Printer) DetectCycles() {
+	panic("unimp")
 }
 
-func (s *state) addImport(importPath string) {
-	if s.importsNeeded == nil {
-		s.importsNeeded = map[string]Import{}
-	}
-	// s.importsNeeded[importPath] = Import{id, pkg}b
-}
-
-func Use(tv interface{}, f PrintFunc) Option {
-	return func(s *state) error {
-		if s.customPrinters == nil {
-			s.customPrinters = map[reflect.Type]PrintFunc{}
-		}
-		s.customPrinters[reflect.TypeOf(tv)] = f
-		return nil
-	}
-}
-
-func Sprint(value interface{}, opts ...Option) (string, error) {
+func (p *Printer) Sprint(value interface{}) (string, error) {
 	var buf bytes.Buffer
-	if err := Fprint(&buf, value, opts...); err != nil {
+	if err := p.Fprint(&buf, value); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
 }
 
-func Print(value interface{}, opts ...Option) error {
-	return Fprint(os.Stdout, value, opts...)
-}
-
-func Fprint(w io.Writer, value interface{}, opts ...Option) error {
+func (p *Printer) Fprint(w io.Writer, value interface{}) error {
 	s := &state{
 		w:   w,
-		pkg: "printing", // TODO: generalize
-	}
-	for _, opt := range opts {
-		if err := opt(s); err != nil {
-			return err
-		}
+		p:   p,
+		err: nil,
 	}
 	s.print(value)
 	return s.err
 }
 
-func (s *state) print(value interface{}) {
-	s.rprint(reflect.ValueOf(value), nil)
+type state struct {
+	p   *Printer
+	w   io.Writer
+	err error
 }
 
-func (s *state) rprint(rv reflect.Value, elide reflect.Type) {
+func (s *state) print(value interface{}) {
+	s.rprint(reflect.ValueOf(value), nil, false)
+}
+
+func (s *state) rprint(rv reflect.Value, imputedType reflect.Type, elide bool) {
 	if !rv.IsValid() {
 		s.printString("nil") // TODO: may need a cast
 		return
 	}
-	if cp := s.customPrinters[rv.Type()]; cp != nil {
+	if cp := s.p.customPrinters[rv.Type()]; cp != nil {
 		out, err := cp(rv.Interface())
 		if err != nil {
 			s.err = err
@@ -100,22 +91,23 @@ func (s *state) rprint(rv reflect.Value, elide reflect.Type) {
 	}
 
 	switch rv.Kind() {
-	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		s.printf("%#v", rv.Interface())
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		s.printPrimitiveLiteral(rv, imputedType)
 	case reflect.Float32, reflect.Float64:
-		s.printFloat(rv, elide)
+		s.printFloat(rv, imputedType)
 	case reflect.Complex64, reflect.Complex128:
-		s.printComplex(rv)
+		s.printComplex(rv, imputedType)
 	case reflect.Ptr:
-		s.printPtr(rv, elide)
+		s.printPtr(rv, imputedType, elide)
 	case reflect.Interface:
-		s.rprint(rv.Elem(), elide)
+		s.rprint(rv.Elem(), imputedType, elide)
 	case reflect.Slice, reflect.Array:
-		s.printSliceOrArray(rv, elide)
+		s.printSliceOrArray(rv, imputedType, elide)
 	case reflect.Map:
-		s.printMap(rv, elide)
+		s.printMap(rv, imputedType, elide)
 	case reflect.Struct:
-		s.printStruct(rv, elide)
+		s.printStruct(rv, imputedType, elide)
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		s.err = fmt.Errorf("cannot print %#v as source", rv.Interface())
 	default:
@@ -123,17 +115,49 @@ func (s *state) rprint(rv reflect.Value, elide reflect.Type) {
 	}
 }
 
-func (s *state) rsprint(rv reflect.Value, elide reflect.Type) string {
+func (s *state) rsprint(rv reflect.Value, imputedType reflect.Type, elide bool) string {
 	s2 := *s
 	var buf bytes.Buffer
 	s2.w = &buf
-	s2.rprint(rv, elide)
+	s2.rprint(rv, imputedType, elide)
 	return buf.String()
 }
 
-func (s *state) printFloat(rf reflect.Value, elide reflect.Type) {
-	f := rf.Float()
-	tFloat64 := reflect.TypeOf(float64(0))
+var (
+	tBool       = reflect.TypeOf(false)
+	tString     = reflect.TypeOf("")
+	tInt        = reflect.TypeOf(int(0))
+	tFloat64    = reflect.TypeOf(float64(0))
+	tComplex128 = reflect.TypeOf(complex128(0))
+)
+
+// If the constant occurs in a context where it won't be converted
+// to the right float type, we need an explicit conversion.
+// This floating-point value could have been in a location whose underlying type
+// is a float32 or float64, or whose underlying type is interface. In the first
+// case no conversion is needed; in the second, one is.
+
+func (s *state) printPrimitiveLiteral(v reflect.Value, imputedType reflect.Type) {
+
+	vs := fmt.Sprintf("%#v", v.Interface()) // TODO: just v???  or v.String()??
+	if v.Type() != defaultType(v) && (imputedType == nil || imputedType.Kind() == reflect.Interface) {
+		s.printf("%s(%s)", s.sprintType(v.Type()), vs)
+	} else {
+		s.printString(vs)
+	}
+}
+
+// func (s *state) printInt(v reflect.Value, imputedType reflect.Type) {
+// 	vs := fmt.Sprintf("%#v", v.Interface())
+// 	if v.Type() != tInt && !isNumeric(imputedType) {
+// 		s.printf("%s(%s)", s.sprintType(v.Type()), vs)
+// 	} else {
+// 		s.printString(vs)
+// 	}
+// }
+
+func (s *state) printFloat(v reflect.Value, imputedType reflect.Type) {
+	f := v.Float()
 	var str string
 	switch {
 	case math.IsNaN(f):
@@ -143,144 +167,160 @@ func (s *state) printFloat(rf reflect.Value, elide reflect.Type) {
 	case math.IsInf(f, -1):
 		str = "math.Inf(-1)"
 	default:
-		// If the constant occurs in a context where it won't be converted
-		// to the right float type, we need a cast.
-		// TODO: adds a cast for a struct field, where it may not be needed.
-		if rf.Type() != tFloat64 && (elide == nil || (elide.Kind() != reflect.Float64 && elide.Kind() != reflect.Float32)) {
-			s.printf("%s(%#v)", s.sprintType(rf.Type()), f)
+		s.printPrimitiveLiteral(v, imputedType)
+		return
+	}
+	if v.Type() == tFloat64 {
+		s.printString(str)
+	} else {
+		// We can't omit the conversion here, regardless of the imputed type, because
+		// this is not a constant literal.
+		s.printf("%s(%s)", s.sprintType(v.Type()), str)
+	}
+}
+
+func (s *state) printComplex(v reflect.Value, imputedType reflect.Type) {
+	c := v.Complex()
+	s.printf("complex(%s, %s)",
+		s.rsprint(reflect.ValueOf(real(c)), nil, false),
+		s.rsprint(reflect.ValueOf(imag(c)), nil, false))
+}
+
+func (s *state) printPtr(v reflect.Value, imputedType reflect.Type, elide bool) {
+	elem := v.Elem()
+	if s.printIfNil(v, imputedType) {
+		return
+	}
+	if isPrimitive(elem.Kind()) {
+		s.printf("func() *%s { var x %[1]s = %s; return &x }()",
+			s.sprintType(elem.Type()), s.rsprint(elem, elem.Type(), false))
+	} else if v.Type() == imputedType {
+		s.rprint(elem, imputedType.Elem(), elide)
+	} else {
+
+		s.printString("&")
+		s.rprint(elem, nil, false)
+	}
+}
+
+func (s *state) printSliceOrArray(v reflect.Value, imputedType reflect.Type, elide bool) {
+	if s.printIfNil(v, imputedType) {
+		return
+	}
+	t := v.Type()
+	var ts string
+	if elide && t == imputedType {
+		ts = ""
+	} else {
+		ts = s.sprintType(t)
+	}
+
+	if t.Kind() == reflect.Slice && v.IsNil() {
+		if ts == "" {
+			s.printString("nil")
 		} else {
-			s.printf("%#v", f)
+			s.printf("%s(nil)", ts)
 		}
 		return
 	}
-	// We can't elide the type here.
-	s.printConversion(rf.Type(), tFloat64, str)
-}
 
-func (s *state) printComplex(rc reflect.Value) {
-	c := rc.Complex()
-	s.printf("complex(%s, %s)",
-		s.rsprint(reflect.ValueOf(real(c)), nil),
-		s.rsprint(reflect.ValueOf(imag(c)), nil))
-}
+	s.printf("%s{", ts)
 
-func (s *state) printPtr(rv reflect.Value, elide reflect.Type) {
-	elem := rv.Elem()
-	if isPrimitive(elem.Kind()) {
-		s.printf("func() *%s { var x %[1]s = %s; return &x }()", s.sprintType(elem.Type()), s.rsprint(elem, nil))
-	} else if rv.Type() == elide {
-		s.rprint(elem, elide.Elem())
-	} else {
-		s.printString("&")
-		s.rprint(elem, nil)
-	}
-}
-
-func (s *state) printSliceOrArray(rv reflect.Value, elide reflect.Type) {
-	k := rv.Type().Elem().Kind()
-	if rv.Type() == elide {
-		s.printString("{")
-	} else {
-		s.printf("%s{", s.sprintType(rv.Type()))
-	}
-	if k != reflect.String && isPrimitive(k) && rv.Len() <= 10 {
+	k := t.Elem().Kind()
+	if k != reflect.String && isPrimitive(k) && v.Len() <= 10 {
 		// Write on one line.
-		for i := 0; i < rv.Len(); i++ {
+		for i := 0; i < v.Len(); i++ {
 			if i > 0 {
 				s.printString(", ")
 			}
-			s.rprint(rv.Index(i), rv.Type().Elem())
+			s.rprint(v.Index(i), t.Elem(), true)
 		}
 		s.printString("}")
 	} else {
 		s.printString("\n")
-		for i := 0; i < rv.Len(); i++ {
+		for i := 0; i < v.Len(); i++ {
 			s.printString("\t")
-			s.rprint(rv.Index(i), rv.Type().Elem())
+			s.rprint(v.Index(i), t.Elem(), true)
 			s.printString(",\n")
 		}
 		s.printString("}\n")
 	}
 }
 
-func (s *state) printMap(rv reflect.Value, elide reflect.Type) {
-	typ := rv.Type()
-	ts := ""
-	if typ != elide {
-		ts = s.sprintType(typ)
+func (s *state) printMap(v reflect.Value, imputedType reflect.Type, elide bool) {
+	if s.printIfNil(v, imputedType) {
+		return
 	}
-	switch rv.Len() {
-	case 0:
-		if rv.IsNil() {
-			s.printf("%s(nil)", ts)
-		} else {
-			s.printf("%s{}", ts)
+	t := v.Type()
+	var ts string
+	if elide && t == imputedType {
+		ts = ""
+	} else {
+		ts = s.sprintType(t)
+	}
+	keys := v.MapKeys()
+	// Sort the keys if we can.
+	if less := lessFunc(t.Key()); less != nil {
+		sort.Slice(keys, func(i, j int) bool {
+			return less(keys[i], keys[j])
+		})
+	}
+
+	multiline := len(keys) >= 2
+	s.printf("%s{", ts)
+	if multiline {
+		s.printString("\n")
+	}
+	for i, k := range keys {
+		if multiline {
+			s.printString("\t")
 		}
-	case 1:
-		s.printf("%s{", ts)
-		k := rv.MapKeys()[0]
-		s.rprint(k, typ.Key())
+		if i > 0 && !multiline {
+			s.printString(", ")
+		}
+		s.rprint(k, t.Key(), true)
 		s.printString(": ")
-		s.rprint(rv.MapIndex(k), typ.Elem())
-		s.printString("}")
-	default:
-		keys := rv.MapKeys()
-		if less := lessFunc(typ.Key()); less != nil {
-			sort.Slice(keys, func(i, j int) bool {
-				return less(keys[i], keys[j])
-			})
-		}
-		s.printf("%s{\n", ts)
-		for _, k := range keys {
-			s.printString("\t")
-			s.rprint(k, typ.Key())
-			s.printString(": ")
-			s.rprint(rv.MapIndex(k), typ.Elem())
+		s.rprint(v.MapIndex(k), t.Elem(), true)
+		if multiline {
 			s.printString(",\n")
 		}
-		s.printString("}\n")
+	}
+	s.printString("}")
+	if multiline {
+		s.printString("\n")
 	}
 }
 
-func (s *state) printStruct(rv reflect.Value, elide reflect.Type) {
-	typ := rv.Type()
-
-	type field struct {
-		name  string
-		value reflect.Value
+func (s *state) printStruct(rv reflect.Value, imputedType reflect.Type, elide bool) {
+	t := rv.Type()
+	var ts string
+	if elide && t == imputedType {
+		ts = ""
+	} else {
+		ts = s.sprintType(t)
 	}
 
-	var fields []field
-	for i := 0; i < typ.NumField(); i++ {
-		if typ.Field(i).IsExported() {
-			v := rv.Field(i)
-			if !v.IsZero() {
-				fields = append(fields, field{typ.Field(i).Name, v})
-			}
+	var inds []int
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).IsExported() && !rv.Field(i).IsZero() {
+			inds = append(inds, i)
 		}
 	}
-	stype := ""
-	if typ != elide {
-		stype = s.sprintType(typ)
-	}
-	switch len(fields) {
+	switch len(inds) {
 	case 0:
-		s.printf("%s{}", stype)
+		s.printf("%s{}", ts)
 	case 1:
-		s.printf("%s{%s: %s}", stype, fields[0].name, s.rsprint(fields[0].value, nil))
+		i := inds[0]
+		s.printf("%s{%s: %s}", ts, t.Field(i).Name, s.rsprint(rv.Field(i), t.Field(i).Type, false))
 	default:
-		s.printf("%s{\n", stype)
-		for _, f := range fields {
-			s.printf("\t%s: ", f.name)
-			s.rprint(f.value, nil)
+		s.printf("%s{\n", ts)
+		for _, i := range inds {
+			s.printf("\t%s: ", t.Field(i).Name)
+			s.rprint(rv.Field(i), t.Field(i).Type, false)
 			s.printf(",\n")
 		}
 		s.printf("}\n")
 	}
-}
-
-func (s *state) canElide(t reflect.Type) bool {
-	return false
 }
 
 func (s *state) sprintType(t reflect.Type) string {
@@ -302,18 +342,38 @@ func (s *state) sprintType(t reflect.Type) string {
 		s.err = fmt.Errorf("can't handle unnamed type %s", t)
 		return "???"
 	}
-	if t.PkgPath() == s.pkg {
+	pkgPath := t.PkgPath()
+	if pkgPath == "" {
+		return t.String()
+	}
+	if pkgPath == s.p.pkgPath {
 		return t.Name()
 	}
-	return t.String()
+	if id, ok := s.p.imports[pkgPath]; ok {
+		return id + "." + t.Name()
+	}
+	s.err = fmt.Errorf("unknown package %s; call Printer.RegisterImport(%[1]q, <identifier>)", pkgPath)
+	return "???"
 }
 
-func (s *state) printConversion(t, b reflect.Type, expr string) {
-	if t == b || s.canElide(t) {
-		s.printString(expr)
-	} else {
-		s.printf("%s(%s)", s.sprintType(t), expr)
+func (s *state) printIfNil(v reflect.Value, imputedType reflect.Type) bool {
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Interface:
+		if v.IsNil() {
+			if v.Type() == imputedType {
+				s.printString("nil")
+			} else {
+				ts := s.sprintType(v.Type())
+				if ts[0] == '*' {
+					s.printf("(%s)(nil)", ts)
+				} else {
+					s.printf("%s(nil)", ts)
+				}
+			}
+			return true
+		}
 	}
+	return false
 }
 
 func (s *state) printString(str string) {
@@ -338,6 +398,67 @@ func isPrimitive(k reflect.Kind) bool {
 		return false
 	}
 }
+
+// default type for an untyped constant
+func defaultType(v reflect.Value) reflect.Type {
+	switch {
+	case v.Kind() == reflect.Bool:
+		return tBool
+	case v.Kind() == reflect.String:
+		return tString
+	case isInt(v.Type()) || isUint(v.Type()):
+		return tInt
+	case isFloat(v.Type()):
+		return tFloat64
+	case isComplex(v.Type()):
+		return tComplex128
+	default:
+		panic("not a possible value for a numeric untyped constant")
+	}
+}
+
+func isInt(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return true
+	}
+	return false
+}
+
+func isUint(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return false
+}
+
+func isFloat(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+func isComplex(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Complex64, reflect.Complex128:
+		return true
+	}
+	return false
+}
+
+// func isNumeric(t reflect.Type) bool {
+// 	if t == nil {
+// 		return false
+// 	}
+// 	k := t.Kind()
+// 	if k == reflect.Bool || k == reflect.String {
+// 		return false
+// 	}
+// 	return isPrimitive(k)
+// }
 
 func lessFunc(t reflect.Type) func(v1, v2 reflect.Value) bool {
 	switch t.Kind() {
