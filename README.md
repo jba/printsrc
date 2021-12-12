@@ -1,3 +1,5 @@
+# printsrc: Printing Go Values as Source
+
 Goal: print a Go value so it can be read back.
 
 Packages that don't try to make things readable:

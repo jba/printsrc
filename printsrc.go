@@ -1,15 +1,6 @@
 // Copyright 2021 by Jonathan Amsterdam. All rights reserved.
 
-// Print a Go value as Go source.
-
-// TODO:
-// - NaN map keys? not handling
-// - testing printPtr with various imputed/elide combos
-// - 100% test coverage
-/*
-
- */
-package main
+package printsrc
 
 import (
 	"bytes"

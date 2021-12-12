@@ -1,4 +1,6 @@
-package main
+// Copyright 2021 by Jonathan Amsterdam. All rights reserved.
+
+package printsrc
 
 import (
 	"math"
@@ -61,7 +63,7 @@ type node struct {
 type MyMap map[string]int
 
 func TestPrint(t *testing.T) {
-	p := NewPrinter("printing")
+	p := NewPrinter("github.com/jba/printsrc")
 	p.RegisterImport("net")
 	p.RegisterImport("time")
 	p.RegisterNamedImport("text/template", "ttemp")
@@ -121,6 +123,12 @@ func TestPrint(t *testing.T) {
 		{&i8, "func() *int8 { var x int8 = 7; return &x }()"},
 		{fn, "Float(math.NaN())"},
 		{&fn, "func() *Float { var x Float = Float(math.NaN()); return &x }()"},
+		{[]*int8{&i8}, "[]*int8{func() *int8 { var x int8 = 7; return &x }(),}"},
+		{
+			[]*int8{func() *int8 { var x int8 = 7; return &x }()},
+			"[]*int8{func() *int8 { var x int8 = 7; return &x }(),}",
+		},
+		{[]*[]int{{1}}, "[]*[]int{{1},}"},
 
 		// slices and arrays
 		{[]int(nil), "[]int(nil)"},
@@ -215,7 +223,7 @@ func TestPrint(t *testing.T) {
 }
 
 func TestPrintVerticalWhitespace(t *testing.T) {
-	p := NewPrinter("printing")
+	p := NewPrinter("github.com/jba/printsrc")
 	for _, test := range []struct {
 		in   interface{}
 		want string
@@ -253,7 +261,7 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 }
 
 func TestPrintErrors(t *testing.T) {
-	p := NewPrinter("printing")
+	p := NewPrinter("github.com/jba/printsrc")
 	p.RegisterImport("time")
 	n := &node{v: 1}
 	n.next = n
