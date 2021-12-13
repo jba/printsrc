@@ -432,7 +432,7 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 		multiline = false
 	)
 	for i := 0; i < t.NumField(); i++ {
-		if (t.PkgPath() == s.p.pkgPath || t.Field(i).IsExported()) && !v.Field(i).IsZero() {
+		if (t.PkgPath() == s.p.pkgPath || isExported(t.Field(i))) && !v.Field(i).IsZero() {
 			inds = append(inds, i)
 			if !oneLineType(t.Field(i).Type) {
 				multiline = true
@@ -454,6 +454,10 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 		s.printf("%s: ", t.Field(ind).Name)
 		s.print(v.Field(ind), t.Field(ind).Type, false)
 	})
+}
+
+func isExported(f reflect.StructField) bool {
+	return f.PkgPath == ""
 }
 
 // printSeq prints a sequence of values (slice elements, array elements, or map key-value pairs).
