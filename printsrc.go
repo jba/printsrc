@@ -394,7 +394,7 @@ func (s *state) printSliceOrArray(v reflect.Value, imputedType reflect.Type, eli
 	}
 
 	s.printString(ts)
-	s.printSeq(!isSmall(t.Elem()) || v.Len() > 10, v.Len(), func(i int) {
+	s.printSeq(!oneLineValue(v), v.Len(), func(i int) {
 		s.print(v.Index(i), t.Elem(), true)
 	})
 }
@@ -417,10 +417,8 @@ func (s *state) printMap(v reflect.Value, imputedType reflect.Type, elide bool) 
 			return less(keys[i], keys[j])
 		})
 	}
-
-	oneline := len(keys) < 2 || (len(keys) == 2 && isSmall(t.Key()) && isSmall(t.Elem()))
 	s.printString(ts)
-	s.printSeq(!oneline, len(keys), func(i int) {
+	s.printSeq(!oneLineValue(v), len(keys), func(i int) {
 		s.print(keys[i], t.Key(), true)
 		s.printString(": ")
 		s.print(v.MapIndex(keys[i]), t.Elem(), true)
@@ -436,7 +434,7 @@ func (s *state) printStruct(v reflect.Value, imputedType reflect.Type, elide boo
 	for i := 0; i < t.NumField(); i++ {
 		if (t.PkgPath() == s.p.pkgPath || t.Field(i).IsExported()) && !v.Field(i).IsZero() {
 			inds = append(inds, i)
-			if !isSmall(t.Field(i).Type) {
+			if !oneLineType(t.Field(i).Type) {
 				multiline = true
 			}
 		}
@@ -565,8 +563,54 @@ func isPrimitive(k reflect.Kind) bool {
 	}
 }
 
-func isSmall(t reflect.Type) bool {
-	return isPrimitive(t.Kind()) && t.Kind() != reflect.String
+func oneLineValue(v reflect.Value) bool {
+	if oneLineType(v.Type()) {
+		return true
+	}
+	if v.IsZero() {
+		return true
+	}
+	switch v.Kind() {
+	case reflect.String:
+		return v.Len() <= 20
+	case reflect.Slice, reflect.Array:
+		return v.Len() == 0 ||
+			(v.Len() == 1 && oneLineValue(v.Index(0))) ||
+			(v.Len() <= 10 && oneLineType(v.Type().Elem()))
+	case reflect.Map:
+		if v.Len() == 0 {
+			return true
+		}
+		k0 := v.MapKeys()[0]
+		return (v.Len() == 1 && oneLineValue(k0) && oneLineValue(v.MapIndex(k0))) ||
+			(v.Len() <= 5 && oneLineType(v.Type().Key()) && oneLineType(v.Type().Elem()))
+	default:
+		return false
+	}
+}
+
+func oneLineType(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.String:
+		return false
+	case reflect.Ptr:
+		// Although pointers might seem small, we generate expressions for pointers that
+		// are large (inline functions).
+		return false
+	case reflect.Struct:
+		switch t.NumField() {
+		case 0:
+			return true
+		case 1:
+			return oneLineType(t.Field(0).Type)
+		case 2:
+			return oneLineType(t.Field(0).Type) && oneLineType(t.Field(1).Type)
+		default:
+			return false
+		}
+	default:
+		return isPrimitive(t.Kind())
+	}
 }
 
 // default type for an untyped constant

@@ -124,7 +124,7 @@ func TestPrint(t *testing.T) {
 		{&i8, "func() *int8 { var x int8 = 7; return &x }()"},
 		{fn, "Float(math.NaN())"},
 		{&fn, "func() *Float { var x Float = Float(math.NaN()); return &x }()"},
-		{[]*int{nil}, "[]*int{nil,}"},
+		{[]*int{nil}, "[]*int{nil}"},
 		{[]*int8{&i8}, "[]*int8{func() *int8 { var x int8 = 7; return &x }(),}"},
 		{
 			[]*int8{func() *int8 { var x int8 = 7; return &x }()},
@@ -165,14 +165,14 @@ func TestPrint(t *testing.T) {
 		{map[bool]int{true: 1, false: 2}, "map[bool]int{false: 2, true: 1}"},
 		{map[uint]bool{2: true, 1: false}, "map[uint]bool{0x1: false, 0x2: true}"},
 		{map[float32]int{1.0: 1, -1.0: -1}, "map[float32]int{-1: -1, 1: 1}"},
-		{[]map[int]bool{{1: true}}, "[]map[int]bool{{1: true},}"},
+		{[]map[int]bool{{1: true}}, "[]map[int]bool{{1: true}}"},
 
 		// structs
 		{(*Nested)(nil), "(*Nested)(nil)"},
 		{&Nested{B: 3}, "&Nested{B: 3}"},
 		{Point{1, 2}, "Point{x: 1, y: 2}"},
-		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{A: 1,Nested: Nested{B: 2},}"},
-		{[]Nested{{B: 1}}, "[]Nested{{B: 1},}"},
+		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{A: 1, Nested: Nested{B: 2}}"},
+		{[]Nested{{B: 1}}, "[]Nested{{B: 1}}"},
 		{[]*Nested{{B: 1}, nil}, "[]*Nested{{B: 1},nil,}"},
 		{Unexp{1, 2}, "Unexp{E: 1.0, u: 2.0}"},
 
@@ -195,9 +195,9 @@ func TestPrint(t *testing.T) {
 		{template.Template{}, "ttemp.Template{}"},
 
 		// elision examples from the Go spec
-		{[...]Point{{1.5, -3.5}, {0, 0}}, "[2]Point{{x: 1.5, y: -3.5},{},}"},
+		{[...]Point{{1.5, -3.5}, {0, 0}}, "[2]Point{{x: 1.5, y: -3.5}, {}}"},
 		{[][]int{{1, 2, 3}, {4, 5}}, "[][]int{{1, 2, 3},{4, 5},}"},
-		{[][]Point{{{0, 1}, {1, 2}}}, "[][]Point{{{y: 1},{x: 1, y: 2},},}"},
+		{[][]Point{{{0, 1}, {1, 2}}}, "[][]Point{{{y: 1}, {x: 1, y: 2}}}"},
 		{map[string]Point{"orig": {0, 0}}, `map[string]Point{"orig": {}}`},
 		{map[Point]string{{0, 0}: "orig"}, `map[Point]string{{}: "orig"}`},
 		{[2]*Point{{1.5, -3.5}, {}}, "[2]*Point{{x: 1.5, y: -3.5},{},}"},
@@ -245,9 +245,10 @@ func TestPrintVerticalWhitespace(t *testing.T) {
 			"T{Map: map[string]Float{\"x\": 0.5}}",
 		},
 		{&Nested{B: 3}, "&Nested{B: 3}"},
-		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{\n\tA: 1,\n\tNested: Nested{B: 2},\n}"},
-		{[]Nested{{B: 1}}, "[]Nested{\n\t{B: 1},\n}"},
+		{nesting{A: 1, Nested: Nested{B: 2}}, "nesting{A: 1, Nested: Nested{B: 2}}"},
+		{[]Nested{{B: 1}}, "[]Nested{{B: 1}}"},
 		{[]*Nested{{B: 1}}, "[]*Nested{\n\t{B: 1},\n}"},
+		{[]Underlying{{I: 3, B: true}}, "[]Underlying{\n\t{B: true, I: 3},\n}"},
 		{map[int][]int{}, "map[int][]int{}"},
 		{map[int][]int{1: {2}}, "map[int][]int{1: {2}}"},
 		{map[int][]int{1: {2}, 3: {4, 5, 6}}, "map[int][]int{\n\t1: {2},\n\t3: {4, 5, 6},\n}"},
