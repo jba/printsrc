@@ -1,5 +1,8 @@
 // Copyright 2021 by Jonathan Amsterdam. All rights reserved.
 
+//go:build go1.16
+// +build go1.16
+
 package printsrc_test
 
 import (
