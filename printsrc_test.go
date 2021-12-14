@@ -67,8 +67,7 @@ type node struct {
 type MyMap map[string]int
 
 func TestPrint(t *testing.T) {
-	p := NewPrinter("github.com/jba/printsrc")
-	p.RegisterImport("text/template", "ttemp")
+	p := NewPrinter("github.com/jba/printsrc").Import("text/template", "ttemp")
 	i8 := int8(7)
 	fn := Float(math.NaN())
 	fn32 := float32(math.NaN())
@@ -292,8 +291,7 @@ func TestPrintErrors(t *testing.T) {
 }
 
 func TestRegisterPrinter(t *testing.T) {
-	p := NewPrinter("x")
-	p.RegisterPrinter(func(x int) string { return "INT" })
+	p := NewPrinter("x").PrintFuncs(func(x int) string { return "INT" })
 	got, err := p.Sprint([]interface{}{1, 2.0})
 	if err != nil {
 		t.Fatal(err)
@@ -305,8 +303,7 @@ func TestRegisterPrinter(t *testing.T) {
 }
 
 func TestLessFunc(t *testing.T) {
-	p := NewPrinter("x")
-	p.RegisterLess(func(t1, t2 time.Time) bool { return t1.Before(t2) })
+	p := NewPrinter("x").LessFuncs(func(t1, t2 time.Time) bool { return t1.Before(t2) })
 	m := map[time.Time]int{
 		time.Date(2000, 1, 1, 0, 0, 0, 0, time.Local): 1,
 		time.Date(1990, 1, 1, 0, 0, 0, 0, time.Local): 2,

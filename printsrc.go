@@ -20,10 +20,10 @@ import (
 
 // A Printer prints Go values as source code.
 type Printer struct {
-	pkgPath   string
-	imports   map[string]string // from package path to identifier
-	printers  map[reflect.Type]printFunc
-	lessFuncs map[reflect.Type]lessFunc
+	pkgPath    string
+	imports    map[string]string // from package path to identifier
+	printFuncs map[reflect.Type]printFunc
+	lessFuncs  map[reflect.Type]lessFunc
 }
 
 // NewPrinter constructs a Printer. The argument is the import path of the
@@ -33,12 +33,12 @@ type Printer struct {
 // it or to add custom printers for other types, call RegisterPrinter.
 func NewPrinter(packagePath string) *Printer {
 	p := &Printer{
-		pkgPath:   packagePath,
-		imports:   map[string]string{},
-		printers:  map[reflect.Type]printFunc{},
-		lessFuncs: map[reflect.Type]lessFunc{},
+		pkgPath:    packagePath,
+		imports:    map[string]string{},
+		printFuncs: map[reflect.Type]printFunc{},
+		lessFuncs:  map[reflect.Type]lessFunc{},
 	}
-	p.RegisterPrinter(func(t time.Time) (string, error) {
+	return p.PrintFuncs(func(t time.Time) (string, error) {
 		loc := t.Location()
 		if loc != time.Local && loc != time.UTC {
 			return "", fmt.Errorf("don't know how to represent location %q in source", loc)
@@ -50,13 +50,14 @@ func NewPrinter(packagePath string) *Printer {
 				t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc),
 			nil
 	})
-	return p
 }
 
-// RegisterImport tells the Printer to use the given identifier when
+// Import tells the Printer to use the given identifier when
 // printing types imported from packagePath.
-func (p *Printer) RegisterImport(packagePath, ident string) {
+// It returns its receiver to support chaining.
+func (p *Printer) Import(packagePath, ident string) *Printer {
 	p.imports[packagePath] = ident
+	return p
 }
 
 // PackageIdentifier returns the identifier that should prefix type names from
@@ -76,19 +77,25 @@ func (p *Printer) PackageIdentifier(pkgPath string) string {
 	return path.Base(pkgPath)
 }
 
-// RegisterPrinter associates a type with a function that renders values of that
-// type as Go source. An existing function for the type is replaced.
+// PrintFuncs installs custom print functions for types. Each function should return
+// The Go source for a values of a particular type. Existing functions are replaced.
 //
-// The printFunc argument must be a function of one argument. Values with the
-// type of that argument will be rendered with the function instead of in the
-// usual way. The function's return type must be string or (string, error).
-// RegisterPrinter panics if the function signature is invalid.
-func (p *Printer) RegisterPrinter(printFunc interface{}) {
-	argType, fun, err := processPrintFunc(printFunc)
-	if err != nil {
-		panic(err)
+// Each argument must be a function with one of the signatures
+//   func(T) string
+//   func(T) (string, error)
+// Values of type T will be rendered with the function instead of in the
+// usual way.
+// PrintFuncs panics if the any function signatures are invalid.
+// It returns its receiver to support chaining.
+func (p *Printer) PrintFuncs(funcs ...interface{}) *Printer {
+	for _, f := range funcs {
+		argType, fun, err := processPrintFunc(f)
+		if err != nil {
+			panic(err)
+		}
+		p.printFuncs[argType] = fun
 	}
-	p.printers[argType] = fun
+	return p
 }
 
 // type for wrapped custom print functions.
@@ -121,8 +128,8 @@ func processPrintFunc(pf interface{}) (argType reflect.Type, f printFunc, err er
 	return argType, f, nil
 }
 
-// RegisterLess associates a function with a type that will be used to sort map
-// keys of that type.
+// LessFuncs associates types with functions that will be used to sort map keys
+// of that type.
 //
 // When rendering a map value as Go source, printsrc will sort the keys if it
 // can figure out how. By default it can sort any type whose underlying type is
@@ -130,21 +137,24 @@ func processPrintFunc(pf interface{}) (argType reflect.Type, f printFunc, err er
 // printed in random order, complicating diffs. If a less function is registered
 // for a key type, however, then map keys of that type will be sorted.
 //
-// The provided lessFunc must be a function of two arguments, both of the same
-// type, and a single bool return value. It should report whether its first
-// argument is less than its second. When confronted with a map whose key type
-// is the function's argument type, printsrc will use the registered function to
-// sort the keys.
+// Each argument must be a function with the signature
+//   func(T, T) bool
+// It should report whether its first argument is less than its second. When
+// confronted with a map whose key type is the function's argument type,
+// printsrc will use the registered function to sort the keys.
 //
-// RegisterLess panics if the function signature is invalid.
-//
-// RegisterLess can be used to override the built-in less functions.
-func (p *Printer) RegisterLess(lessFunc interface{}) {
-	argType, fun, err := processLessFunc(lessFunc)
-	if err != nil {
-		panic(err)
+// LessFuncs panics if any function signature is invalid.
+// It can be used to override the built-in less functions.
+// It returns its receiver to support chaining.
+func (p *Printer) LessFuncs(funcs ...interface{}) *Printer {
+	for _, f := range funcs {
+		argType, fun, err := processLessFunc(f)
+		if err != nil {
+			panic(err)
+		}
+		p.lessFuncs[argType] = fun
 	}
-	p.lessFuncs[argType] = fun
+	return p
 }
 
 type lessFunc func(v1, v2 reflect.Value) bool
@@ -253,7 +263,7 @@ func (s *state) print(v reflect.Value, imputedType reflect.Type, elide bool) {
 		s.printString("nil")
 		return
 	}
-	if cp := s.p.printers[v.Type()]; cp != nil {
+	if cp := s.p.printFuncs[v.Type()]; cp != nil {
 		out, err := cp(v)
 		if err != nil {
 			s.err = err
